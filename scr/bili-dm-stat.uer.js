@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.1
+// @version      1.1.2
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -151,8 +151,8 @@
 
     btn.onmouseenter = () => {
       btn.style.left = '10px';
-      btn.style.backgroundColor = 'rgba(0, 172, 229, 0.1)';
-      btn.style.border = '2px solid #00ace5';
+      btn.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+      btn.style.border = '1px solid #00ace5';
     };
 
     btn.onmouseleave = () => {
