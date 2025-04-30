@@ -1,35 +1,184 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.0
+// @version      1.1
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
 // @match        https://www.bilibili.com/video/*
 // @grant        none
+// @license      MIT
 // @run-at       document-end
 // ==/UserScript==
 
 (function () {
   'use strict';
 
+  var biliCrc2Mid = function () {
+    /*
+    函数来源
+    https://github.com/shafferjohn/bilibili-search/blob/master/crc32.js
+    */
+    const CRCPOLYNOMIAL = 0xEDB88320;
+    var startTime = new Date().getTime(),
+      crctable = new Array(256),
+      create_table = function () {
+        var crcreg,
+          i, j;
+        for (i = 0; i < 256; ++i) {
+          crcreg = i;
+          for (j = 0; j < 8; ++j) {
+            if ((crcreg & 1) != 0) {
+              crcreg = CRCPOLYNOMIAL ^ (crcreg >>> 1);
+            }
+            else {
+              crcreg >>>= 1;
+            }
+          }
+          crctable[i] = crcreg;
+        }
+      },
+      crc32 = function (input) {
+        if (typeof (input) != 'string')
+          input = input.toString();
+        var crcstart = 0xFFFFFFFF, len = input.length, index;
+        for (var i = 0; i < len; ++i) {
+          index = (crcstart ^ input.charCodeAt(i)) & 0xff;
+          crcstart = (crcstart >>> 8) ^ crctable[index];
+        }
+        return crcstart;
+      },
+      crc32lastindex = function (input) {
+        if (typeof (input) != 'string')
+          input = input.toString();
+        var crcstart = 0xFFFFFFFF, len = input.length, index;
+        for (var i = 0; i < len; ++i) {
+          index = (crcstart ^ input.charCodeAt(i)) & 0xff;
+          crcstart = (crcstart >>> 8) ^ crctable[index];
+        }
+        return index;
+      },
+      getcrcindex = function (t) {
+        //if(t>0)
+        //t-=256;
+        for (var i = 0; i < 256; i++) {
+          if (crctable[i] >>> 24 == t)
+            return i;
+        }
+        return -1;
+      },
+      deepCheck = function (i, index) {
+        var tc = 0x00, str = '',
+          hash = crc32(i);
+        tc = hash & 0xff ^ index[2];
+        if (!(tc <= 57 && tc >= 48))
+          return [0];
+        str += tc - 48;
+        hash = crctable[index[2]] ^ (hash >>> 8);
+        tc = hash & 0xff ^ index[1];
+        if (!(tc <= 57 && tc >= 48))
+          return [0];
+        str += tc - 48;
+        hash = crctable[index[1]] ^ (hash >>> 8);
+        tc = hash & 0xff ^ index[0];
+        if (!(tc <= 57 && tc >= 48))
+          return [0];
+        str += tc - 48;
+        hash = crctable[index[0]] ^ (hash >>> 8);
+        return [1, str];
+      };
+    create_table();
+    var index = new Array(4);
+    console.log('初始化耗时：' + (new Date().getTime() - startTime) + 'ms');
+    return function (input) {
+      var ht = parseInt('0x' + input) ^ 0xffffffff,
+        snum, i, lastindex, deepCheckData;
+      for (i = 3; i >= 0; i--) {
+        index[3 - i] = getcrcindex(ht >>> (i * 8));
+        snum = crctable[index[3 - i]];
+        ht ^= snum >>> ((3 - i) * 8);
+      }
+      for (i = 0; i < 100000000; i++) {
+        lastindex = crc32lastindex(i);
+        if (lastindex == index[3]) {
+          deepCheckData = deepCheck(i, index)
+          if (deepCheckData[0])
+            break;
+        }
+      }
+
+      if (i == 100000000)
+        return -1;
+      console.log('总耗时：' + (new Date().getTime() - startTime) + 'ms');
+      return i + '' + deepCheckData[1];
+    }
+  }
   // 插入按钮
   function insertButton() {
-    const btn = document.createElement('button');
-    btn.innerText = '弹幕统计';
+    const btn = document.createElement('div');
+    btn.id = 'danmaku-stat-btn';
+    btn.innerHTML = `
+      <span class="label">弹幕统计</span>
+      <div class="icon-wrapper">
+        <svg t="1745985333201" class="icon" viewBox="0 0 1024 1024" version="1.1"
+          xmlns="http://www.w3.org/2000/svg" p-id="1486" width="24" height="24">
+          <path d="M691.2 928.2V543.1c0-32.7 26.5-59.3 59.2-59.3h118.5c32.7 0 59.3 26.5 59.3 59.2V928.2h-237z m192.6-385.1c0-8.2-6.6-14.8-14.8-14.8H750.5c-8.2 0-14.8 6.6-14.9 14.7v340.8h148.2V543.1zM395 157.8c-0.1-32.6 26.3-59.2 58.9-59.3h118.8c32.6 0 59.1 26.5 59.1 59.1v770.6H395V157.8z m44.4 725.9h148V157.9c0-8.1-6.5-14.7-14.7-14.8H454.1c-8.1 0.1-14.7 6.7-14.7 14.8v725.8zM98.6 394.9c0-32.7 26.5-59.2 59.2-59.3h118.5c32.7-0.1 59.3 26.4 59.3 59.1v533.5h-237V394.9z m44.5 488.8h148.2V394.9c0-8.2-6.7-14.8-14.8-14.8H158c-8.2 0-14.8 6.6-14.9 14.7v488.9z"
+            p-id="1487" fill="#00ace5"></path>
+        </svg>
+      </div>
+    `;
+    /*
+    图标来源
+    https://www.iconfont.cn/collections/detail?spm=a313x.user_detail.i1.dc64b3430.5d3b3a81zCorAg&cid=20644
+    */
     btn.style.position = 'fixed';
-    btn.style.left = "20px";
-    btn.style.bottom = "40px";
+    btn.style.left = '-100px'; // 露出约20px图标
+    btn.style.bottom = '40px';
     btn.style.zIndex = '9997';
-    btn.style.padding = '10px 20px';
-    btn.style.backgroundColor = '#00ace5';
-    btn.style.color = '#fff';
-    btn.style.border = 'none';
-    btn.style.borderRadius = '5px';
+    btn.style.width = '120px';
+    btn.style.height = '40px';
+    btn.style.backgroundColor = 'transparent';
+    btn.style.color = '#00ace5';
+    btn.style.borderRadius = '20px';
     btn.style.cursor = 'pointer';
     btn.style.fontSize = '16px';
-    btn.style.boxShadow = "0 2px 5px rgba(0, 0, 0, 0.2)";
+    btn.style.display = 'flex';
+    btn.style.alignItems = 'center';
+    btn.style.justifyContent = 'space-between';
+    btn.style.boxShadow = '0 0 5px rgba(0, 172, 229, 0.3)';
+    btn.style.transition = 'left 0.3s ease-in-out, background-color 0.2s ease-in-out';
+
+    btn.onmouseenter = () => {
+      btn.style.left = '10px';
+      btn.style.backgroundColor = 'rgba(0, 172, 229, 0.1)';
+      btn.style.border = '2px solid #00ace5';
+    };
+
+    btn.onmouseleave = () => {
+      btn.style.left = '-100px';
+      btn.style.backgroundColor = 'transparent';
+      btn.style.border = 'none';
+    };
+
     btn.onclick = openIframe;
+
+    const style = document.createElement('style');
+    style.textContent = `
+      #danmaku-stat-btn .label {
+        margin-left: 20px;
+        white-space: nowrap;
+        color: #00ace5;
+      }
+      #danmaku-stat-btn .icon-wrapper {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 8px;
+        flex-shrink: 0;
+      }
+    `;
+    document.head.appendChild(style);
+
     document.body.appendChild(btn);
   }
 
@@ -75,6 +224,7 @@
   async function initIframeApp(iframe) {
     const doc = iframe.contentDocument;
     const win = iframe.contentWindow;
+
 
     // 引入外部库
     const addScript = (src) => new Promise(resolve => {
@@ -197,17 +347,47 @@
               weight: parseInt(parts[8]),
               content: d.textContent.trim()
             });
-            //https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/danmaku/danmaku_xml.md
           }
           return danmakus;
         }
 
         function midHashOnClick() {
           if (!currentUserMidHash.value) return;
-          navigator.clipboard.writeText(currentUserMidHash.value).then(() => {
-            ELEMENT_PLUS.ElMessage.success('midHash已复制到剪贴板');
+          ELEMENT_PLUS.ElMessageBox.confirm(
+            '是否尝试反查用户ID？（可能需要一段时间）',
+            '提示',
+            {
+              confirmButtonText: '是',
+              cancelButtonText: '否',
+              type: 'warning',
+            }
+          ).then(() => {
+            // 开始反查用户ID
+            var midcrc = new biliCrc2Mid();
+            var result = midcrc(currentUserMidHash.value);
+            if (result && result !== '-1') {
+              ELEMENT_PLUS.ElMessageBox.alert(
+                `已查到用户ID：
+                <a href="https://space.bilibili.com/${result}" target="_blank" style="color:#409eff;text-decoration:none;">
+                  点击访问用户空间
+                </a>`,
+                '查找成功',
+                {
+                  dangerouslyUseHTMLString: true,
+                  confirmButtonText: '确定',
+                  type: 'success',
+                }
+              );
+            } else {
+              ELEMENT_PLUS.ElMessage.error('未能查到用户ID或用户不存在');
+            }
           }).catch(() => {
-            ELEMENT_PLUS.ElMessage.error('复制失败');
+            // 用户点击了取消，只复制midHash
+            navigator.clipboard.writeText(currentUserMidHash.value).then(() => {
+              ELEMENT_PLUS.ElMessage.success('midHash已复制到剪贴板');
+            }).catch(() => {
+              ELEMENT_PLUS.ElMessage.error('复制失败');
+            });
           });
           displayedDanmakus.value = manager.getOriginDanmakusByUser(currentUserMidHash.value).sort((a, b) => a.progress - b.progress);
         }
@@ -238,7 +418,7 @@
               type: 'value',
               min: 0,
               max: Math.ceil(maxCount * 1.1), // 横轴最大值略大一点
-              scale: false, // 不缩放
+              scale: false
             },
             yAxis: {
               type: 'category',
@@ -249,8 +429,8 @@
               {
                 type: 'slider',
                 yAxisIndex: 0,
-                start: 0,
-                end: userNames.length > 20 ? (20 / userNames.length) * 100 : 100,
+                startValue: 0,
+                endValue: userNames.length >= 20 ? 19 : userNames.length,
                 width: 10
               }
             ],
@@ -265,6 +445,40 @@
               }
             }]
           });
+        }
+
+        function handleRowClick(row) {
+          if (!chart) return;
+
+          const userMid = row.midHash;
+          const option = chart.getOption();
+
+          const index = option.yAxis[0].data.indexOf(userMid);
+          if (index >= 0) {
+            chart.setOption({
+              yAxis: {
+                axisLabel: {
+                  formatter: function (value) {
+                    if (value === userMid) {
+                      return '{a|' + value + '}';
+                    } else {
+                      return value;
+                    }
+                  },
+                  rich: {
+                    a: {
+                      color: '#5470c6',
+                      fontWeight: 'bold'
+                    }
+                  }
+                }
+              },
+              dataZoom: [{
+                startValue: Math.min(option.yAxis[0].data.length - 20, Math.max(0, index - 9)),
+                endValue: Math.min(option.yAxis[0].data.length - 1, Math.max(0, index - 9) + 19)
+              }]
+            });
+          }
         }
 
         function applyFilter() {
@@ -312,9 +526,7 @@
           }
         }
         onMounted(async () => {
-          console.log(videoData.value);
           videoData.value = await getVideoData();
-          console.log(videoData.value);
           const oid = videoData.value.cid;
           if (!oid) {
             alert('无法找到视频chatid');
@@ -341,6 +553,7 @@
           originDanmakuCount,
           currentUserMidHash,
           midHashOnClick,
+          handleRowClick,
           formatProgress,
           formatCtime,
           formatTime
@@ -400,11 +613,22 @@
             </div>
 
             <!-- 下半部：弹幕表格 -->
-            <el-table :data="displayedDanmakus" style="width: 100%;" height="calc(100% - 150px)" border>
+            <el-table :data="displayedDanmakus" style="width: 100%;" height="calc(100% - 150px)" border @row-click="handleRowClick">
               <el-table-column prop="progress" label="时间" align="left" width="100">
                 <template #default="{ row }">{{ formatProgress(row.progress) }}</template>
               </el-table-column>
-              <el-table-column prop="content" label="弹幕内容" align="left" />
+              <el-table-column prop="content" label="弹幕内容" align="left">
+                <template #default="{ row }">
+                  <el-tooltip
+                    class="item"
+                    effect="dark"
+                    placement="top-start"
+                    :content="'发送用户: ' + row.midHash + '\\n屏蔽等级: ' + row.weight"
+                  >
+                    <span>{{ row.content }}</span>
+                  </el-tooltip>
+                </template>
+              </el-table-column>
               <el-table-column prop="ctime" label="发送时间" align="left" width="180">
                 <template #default="{ row }">{{ formatCtime(row.ctime) }}</template>
               </el-table-column>
