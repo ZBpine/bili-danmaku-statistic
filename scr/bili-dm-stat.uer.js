@@ -6,6 +6,7 @@
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
 // @match        https://www.bilibili.com/video/*
+// @match        https://www.bilibili.com/list/watchlater*
 // @grant        none
 // @license      MIT
 // @run-at       document-end
@@ -505,12 +506,26 @@
         }
 
         async function getVideoData() {
-          const bvidMatch = location.href.match(/\/video\/(BV\w+)/);
-          if (!bvidMatch) {
-            console.error('找不到BVID');
+          const url = location.href;
+          let bvid = null;
+
+          // 判断是否为 watchlater 链接
+          if (url.includes('/list/watchlater')) {
+            const match = url.match(/[?&]bvid=(BV\w+)/);
+            if (match) {
+              bvid = match[1];
+            }
+          } else {
+            const match = url.match(/\/video\/(BV\w+)/);
+            if (match) {
+              bvid = match[1];
+            }
+          }
+
+          if (!bvid) {
+            console.error('找不到 BVID');
             return null;
           }
-          const bvid = bvidMatch[1];
           try {
             const res = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`);
             const json = await res.json();
