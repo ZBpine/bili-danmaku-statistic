@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.1.6
+// @version      1.1.7
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -121,7 +121,7 @@
     btn.innerHTML = `
       <span class="label">弹幕统计</span>
       <div class="icon-wrapper">
-        <svg t="1745985333201" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1486"
+        <svg t="1745985333201" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1486" 
         width="24" height="24">
           <path d="M691.2 928.2V543.1c0-32.7 26.5-59.3 59.2-59.3h118.5c32.7 0 59.3 26.5 59.3 59.2V928.2h-237z m192.6-385.1c0-8.2-6.6-14.8-14.8-14.8H750.5c-8.2 0-14.8 6.6-14.9 14.7v340.8h148.2V543.1zM395 157.8c-0.1-32.6 26.3-59.2 58.9-59.3h118.8c32.6 0 59.1 26.5 59.1 59.1v770.6H395V157.8z m44.4 725.9h148V157.9c0-8.1-6.5-14.7-14.7-14.8H454.1c-8.1 0.1-14.7 6.7-14.7 14.8v725.8zM98.6 394.9c0-32.7 26.5-59.2 59.2-59.3h118.5c32.7-0.1 59.3 26.4 59.3 59.1v533.5h-237V394.9z m44.5 488.8h148.2V394.9c0-8.2-6.7-14.8-14.8-14.8H158c-8.2 0-14.8 6.6-14.9 14.7v488.9z" p-id="1487" fill="#00ace5"></path>
         </svg>
@@ -504,18 +504,15 @@
         async function getVideoData() {
           const url = location.href;
           let bvid = null;
+          let pageIndex = 0;
 
           // 判断是否为 watchlater 链接
           if (url.includes('/list/watchlater')) {
             const match = url.match(/[?&]bvid=(BV\w+)/);
-            if (match) {
-              bvid = match[1];
-            }
+            if (match) bvid = match[1];
           } else {
             const match = url.match(/\/video\/(BV\w+)/);
-            if (match) {
-              bvid = match[1];
-            }
+            if (match) bvid = match[1];
           }
 
           if (!bvid) {
@@ -526,7 +523,17 @@
             const res = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`);
             const json = await res.json();
             if (json && json.data) {
-              return json.data;
+              const data = json.data;
+              // 读取 p 参数
+              const pMatch = url.match(/[?&]p=(\d+)/);
+              if (pMatch) {
+                const pageIndex = parseInt(pMatch[1], 10) - 1;
+                if (!isNaN(pageIndex) && data.pages && data.pages[pageIndex]) {
+                  data.page_index = pageIndex;
+                  data.page_cur = data.pages[pageIndex];
+                }
+              }
+              return data;
             } else {
               console.error('获取视频基本信息失败', json);
               return null;
@@ -538,7 +545,7 @@
         }
         onMounted(async () => {
           videoData.value = await getVideoData();
-          const oid = videoData.value.cid;
+          const oid = videoData.value.page_cur?.cid || videoData.value.cid;
           if (!oid) {
             alert('无法找到视频chatid');
             return;
@@ -598,7 +605,7 @@
                       target="_blank"
                       type="primary"
                     >
-                      <svg t="1746010439489" class="icon" viewBox="0 0 1029 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5042"
+                      <svg t="1746010439489" class="icon" viewBox="0 0 1029 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5042" 
                       width="20" height="20">
                       <path d="M487.966546 867.289336c-0.191055 0-0.38211 0-0.577318-0.008306-85.119089-0.926201-171.396967-8.3898-256.428835-22.178976a29.812863 29.812863 0 0 0-0.598085-0.095528c-75.890309-13.224318-150.032051-79.636645-165.274905-148.050895l-0.161981-0.751759c-33.405525-161.104925-33.405525-324.473435 0-485.570054 0.053994-0.249202 0.103834-0.498404 0.161981-0.743452C80.326104 141.467809 154.471999 75.051329 230.370615 61.835317l0.593931-0.09968a1713.961362 1713.961362 0 0 1 550.250427 0.09968c75.890309 13.207705 150.036204 79.624185 165.279059 148.055049 0.058147 0.249202 0.107988 0.494251 0.157827 0.743452 21.672265 104.444702 29.385067 210.417843 22.943196 314.962227-1.761027 28.620847-26.390489 50.355413-55.011337 48.627612-28.625001-1.765181-50.38864-26.390489-48.627612-55.011336 5.864553-95.195155-1.158789-191.769229-20.878973-287.043298-6.836441-29.630115-51.015798-62.56631-81.414286-67.99476a1610.243499 1610.243499 0 0 0-515.735953 0c-30.394335 5.432603-74.577845 38.368798-81.422593 67.990606-30.377721 146.817345-30.381874 295.690607 0 442.512105 6.853054 29.621808 51.028258 62.55385 81.422593 67.986453 79.81524 12.925276 160.756042 19.923698 240.587896 20.791752 28.670688 0.315656 51.65957 23.802942 51.352221 52.481936-0.311502 28.479633-23.49144 51.352221-51.900465 51.352221z" p-id="5043" fill="#409eff"></path><path d="M727.790223 570.539621c20.272581 20.272581 53.150628 20.276734 73.427362 0s20.276734-53.146475 0-73.423209l-102.762589-102.766742a51.917079 51.917079 0 0 0-73.427362 0l-86.036983 86.036982-66.055138-66.055137c-20.272581-20.272581-53.146475-20.272581-73.423209 0l-162.716431 162.712278c-20.272581 20.280888-20.272581 53.150628 0 73.423209a51.759251 51.759251 0 0 0 36.711604 15.209628c13.286619 0 26.573238-5.075414 36.711605-15.209628l126.004827-126.004826 66.055137 66.055137c20.276734 20.280888 53.146475 20.280888 73.419056 0l86.04529-86.036983 66.046831 66.059291zM974.911364 766.408222c-20.272581-20.272581-53.142322-20.272581-73.427363 0l-40.877431 40.881585v-133.318905c0-28.670688-23.246391-51.917079-51.917079-51.917079s-51.917079 23.246391-51.917078 51.917079v133.318905l-40.877432-40.881585c-20.285041-20.272581-53.154782-20.272581-73.427362 0-20.272581 20.280888-20.272581 53.150628 0 73.427363l129.510268 129.501961c10.138367 10.134214 23.424986 15.205474 36.711604 15.205474s26.569084-5.07126 36.711605-15.205474l129.510268-129.501961c20.268428-20.276734 20.268428-53.146475 0-73.427363z" p-id="5044" fill="#409eff"></path>
                       </svg>
@@ -606,8 +613,12 @@
                   </template>
                 </el-popover>
               </h3>
+              <el-tag type="success" v-if="videoData.page_cur">
+                第 {{ videoData.page_index + 1 }} P：{{ videoData.page_cur.part }}
+              </el-tag>
+
               <p style="margin: 10px;">
-                BVID：
+                BVID：    
                 <el-link
                   v-if="videoData.bvid"
                   :href="'https://www.bilibili.com/video/' + videoData.bvid"
@@ -646,7 +657,7 @@
                       type="primary"
                       style="margin-left: 8px; vertical-align: -2px;"
                     >
-                      <svg t="1746010657723" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="10144"
+                      <svg t="1746010657723" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="10144" 
                       width="16" height="16">
                       <path d="M1024 512c0-281.6-230.4-512-512-512S0 230.4 0 512s230.4 512 512 512 512-230.4 512-512z m-512 448c-249.6 0-448-198.4-448-448s198.4-448 448-448 448 198.4 448 448-198.4 448-448 448z" fill="#409eff" p-id="10145"></path><path d="M627.2 505.6c44.8-38.4 76.8-89.6 76.8-153.6 0-108.8-83.2-192-192-192s-192 83.2-192 192c0 64 32 115.2 76.8 153.6-102.4 44.8-172.8 147.2-172.8 262.4 0 19.2 12.8 32 32 32s32-12.8 32-32c0-121.6 102.4-224 224-224s224 102.4 224 224c0 19.2 12.8 32 32 32s32-12.8 32-32c0-115.2-70.4-217.6-172.8-262.4zM512 480c-70.4 0-128-57.6-128-128s57.6-128 128-128 128 57.6 128 128-57.6 128-128 128z" fill="#409eff" p-id="10146"></path>
                       </svg>
@@ -654,19 +665,19 @@
                   </template>
                 </el-popover><br/>
                 发布时间：
-                <el-tag type="info" size="small" style="vertical-align: baseline;">
+                <el-tag type="info" size="small" style="vertical-align: baseline;"> 
                   {{ videoData.pubdate ? formatTime(videoData.pubdate) : '-' }}
                 </el-tag><br/>
                 截止 <el-tag type="info" size="small" style="vertical-align: baseline;"> {{ formatTime(Math.floor(Date.now()/1000)) }} </el-tag>
                 播放量:
-                <el-tag type="primary" size="small" style="vertical-align: baseline;">
+                <el-tag type="primary" size="small" style="vertical-align: baseline;" v-if="videoData.stat">
                   {{ videoData.stat.view || '-' }}
                 </el-tag><br/>
                 总弹幕数:
-                <el-tag type="primary" size="small" style="vertical-align: baseline;">
+                <el-tag type="primary" size="small" style="vertical-align: baseline;" v-if="videoData.stat">
                   {{ videoData.stat.danmaku || '-' }}
                  </el-tag>
-                 ，载入实时弹幕
+                 ，载入实时弹幕 
                 <el-link
                   v-if="videoData.owner"
                   :href="'https://api.bilibili.com/x/v1/dm/list.so?oid=' + videoData.cid"
@@ -675,7 +686,7 @@
                   style="vertical-align: baseline;"
                   title="下载弹幕"
                 >
-                  {{ originDanmakuCount }}
+                  {{ originDanmakuCount }} 
                 </el-link>
                 条
               </p>
@@ -691,12 +702,12 @@
             </div>
 
             <!-- 下半部：弹幕表格 -->
-            <el-table
-              :data="displayedDanmakus"
-              style="width: 100%;"
-              height="calc(100% - 50px)"
-              border
-              @row-click="handleRowClick"
+            <el-table 
+              :data="displayedDanmakus" 
+              style="width: 100%;" 
+              height="calc(100% - 50px)" 
+              border 
+              @row-click="handleRowClick" 
               v-loading="loading"
             >
               <el-table-column prop="progress" label="时间" align="left" width="80">
