@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.3
+// @version      1.3.4
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -135,7 +135,8 @@
         btn.style.height = '40px';
         btn.style.backgroundColor = 'transparent';
         btn.style.color = '#00ace5';
-        btn.style.borderRadius = '20px';
+        btn.style.borderTopRightRadius = '20px';
+        btn.style.borderBottomRightRadius = '20px';
         btn.style.cursor = 'pointer';
         btn.style.fontSize = '16px';
         btn.style.display = 'flex';
@@ -145,8 +146,8 @@
         btn.style.transition = 'left 0.3s ease-in-out, background-color 0.2s ease-in-out';
 
         btn.onmouseenter = () => {
-            btn.style.left = '10px';
-            btn.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+            btn.style.left = '-10px';
+            btn.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
             btn.style.border = '1px solid #00ace5';
         };
 
@@ -177,7 +178,6 @@
 
         document.body.appendChild(btn);
     }
-
     // 打开iframe面板
     function openIframe() {
         if (document.getElementById('danmaku-stat-iframe')) return;
@@ -215,7 +215,6 @@
         iframe.onload = () => initIframeApp(iframe);
         document.body.appendChild(iframe);
     }
-
     // iframe里初始化Vue应用
     async function initIframeApp(iframe) {
         const doc = iframe.contentDocument;
@@ -229,7 +228,6 @@
             script.onload = resolve;
             doc.head.appendChild(script);
         });
-
         const addCss = (href) => {
             const link = doc.createElement('link');
             link.rel = 'stylesheet';
@@ -258,8 +256,8 @@
 
         class DanmakuManager {
             constructor(danmakuList) {
-                this.original = danmakuList;
-                this.filtered = [...danmakuList];
+                this.original = [...danmakuList].sort((a, b) => a.progress - b.progress);
+                this.filtered = [...this.original]; // 保持同步顺序
             }
 
             reset() {
@@ -268,10 +266,6 @@
 
             filter(regex) {
                 this.filtered = this.original.filter(d => regex.test(d.content));
-            }
-
-            getSortedDanmakus() {
-                return [...this.filtered].sort((a, b) => a.progress - b.progress);
             }
 
             getStats() {
@@ -283,20 +277,13 @@
                     .map(([user, count]) => ({ user, count }))
                     .sort((a, b) => b.count - a.count);
             }
-
-            getDanmakusByUser(midHash) {
-                return this.filtered.filter(d => d.midHash === midHash);
-            }
-            getOriginDanmakusByUser(midHash) {
-                return this.original.filter(d => d.midHash === midHash);
-            }
         }
 
 
         const app = createApp({
             setup() {
                 const displayedDanmakus = ref([]);
-                const filterText = ref('(哈|呵|h|ha|HA|H+|233+)+');
+                const filterText = ref('^(哈|呵|h|ha|HA|H+|233+)+$');
                 const originDanmakuCount = ref(0);
                 const currentFilt = ref('');
                 const currentSubFilt = ref({});
@@ -376,11 +363,7 @@
                         ELEMENT_PLUS.ElMessage.error('找不到截图区域');
                         return;
                     }
-                    const loadingInstance = ELEMENT_PLUS.ElLoading.service({
-                        target: doc.body,
-                        text: '正在生成截图，请稍候...',
-                        background: 'rgba(255, 255, 255, 0.8)'
-                    });
+                    loading.value = true;
                     try {
                         titleWrapper.style.paddingBottom = '10px';  //dom-to-image-more会少截
                         tableWrapper.style.paddingBottom = '40px';
@@ -467,16 +450,20 @@
                     } finally {
                         titleWrapper.style.paddingBottom = '';
                         tableWrapper.style.paddingBottom = '';
-                        loadingInstance.close();
+                        loading.value = false;
                     }
                 }
 
                 function midHashOnClick() {
                     if (!currentSubFilt.value.user) return;
                     ELEMENT_PLUS.ElMessageBox.confirm(
-                        '是否尝试反查用户ID？（可能需要一段时间）',
+                        `是否尝试反查用户ID？
+                        <p style="margin-top: 10px; font-size: 12px; color: gray;">
+                            可能需要一段时间，且10位数以上ID容易查错
+                        </p>`,
                         '提示',
                         {
+                            dangerouslyUseHTMLString: true,
                             confirmButtonText: '是',
                             cancelButtonText: '否',
                             type: 'warning',
@@ -490,7 +477,10 @@
                                 `已查到用户ID：
                                 <a href="https://space.bilibili.com/${result}" target="_blank" style="color:#409eff;text-decoration:none;">
                                     点击访问用户空间
-                                </a>`,
+                                </a>
+                                <p style="margin-top: 10px; font-size: 12px; color: gray;">
+                                    此ID通过弹幕哈希本地计算得出，非官方公开数据，请谨慎使用
+                                </p>`,
                                 '查找成功',
                                 {
                                     dangerouslyUseHTMLString: true,
@@ -509,20 +499,40 @@
                             ELEMENT_PLUS.ElMessage.error('复制失败');
                         });
                     });
-                    displayedDanmakus.value = manager.getOriginDanmakusByUser(currentSubFilt.value.user).sort((a, b) => a.progress - b.progress);
                 }
 
+                async function updateDispDanmakus(data, text, ifchart) {
+                    loading.value = true;
+                    await nextTick();
+                    await new Promise(resolve => setTimeout(resolve, 10)); //等待v-loading渲染
+                    try {
+                        displayedDanmakus.value = data;
+                        currentSubFilt.value = text;
+                        if (ifchart) {
+                            const stats = manager.getStats();
+                            updateChart(stats);
+                            danmakuCount.value = { user: stats.length, dm: displayedDanmakus.value.length }
+                        }
+                        await nextTick();
+                    } catch (err) {
+                        console.error(err);
+                        ELEMENT_PLUS.ElMessage.error('数据显示错误');
+                    } finally {
+                        loading.value = false;
+                    }
+                }
                 function renderWordCloud(data) {
                     const el = doc.getElementById('chart-wordcloud');
                     if (!el) return;
                     if (!charts.wordcloud) {
                         charts.wordcloud = ECHARTS.init(el);
-                        charts.wordcloud.on('click', (params) => {
+                        charts.wordcloud.on('click', async (params) => {
                             const keyword = params.name;
                             const regex = new RegExp(keyword, 'i');
-                            const filtered = manager.original.filter(d => regex.test(d.content));
-                            displayedDanmakus.value = filtered.sort((a, b) => a.progress - b.progress);
-                            currentSubFilt.value = { wordcloud: keyword };
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => regex.test(d.content)),
+                                { wordcloud: keyword }
+                            );
                         });
                     }
                     else charts.wordcloud.clear();
@@ -654,11 +664,12 @@
                     if (!el) return;
                     if (!charts.date) {
                         charts.date = ECHARTS.init(el);
-                        charts.date.on('click', (params) => {
+                        charts.date.on('click', async (params) => {
                             const selectedDate = params.name;
-                            const filtered = manager.original.filter(d => formatTime(d.ctime).startsWith(selectedDate));
-                            displayedDanmakus.value = filtered.sort((a, b) => a.progress - b.progress);
-                            currentSubFilt.value = { date: selectedDate }
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
+                                { date: selectedDate }
+                            );
                         });
                     }
 
@@ -672,11 +683,22 @@
                     const x = sorted.map(([date]) => date);
                     const y = sorted.map(([, count]) => count);
 
+                    const totalDays = x.length;
+                    const startIdx = Math.max(0, totalDays - 30); // 只显示最近30天
                     charts.date.setOption({
                         title: { text: '发送日期分布' },
                         tooltip: {},
                         xAxis: { type: 'category', data: x },
                         yAxis: { type: 'value', name: '弹幕数量' },
+                        dataZoom: [
+                            {
+                                type: 'slider',
+                                startValue: startIdx,
+                                endValue: totalDays - 1,
+                                xAxisIndex: 0,
+                                height: 20
+                            }
+                        ],
                         series: [{ type: 'bar', data: y }]
                     });
                 }
@@ -685,14 +707,15 @@
                     if (!el) return;
                     if (!charts.hour) {
                         charts.hour = ECHARTS.init(el);
-                        charts.hour.on('click', (params) => {
+                        charts.hour.on('click', async (params) => {
                             const selectedHour = parseInt(params.name);
-                            const filtered = manager.original.filter(d => {
-                                const h = new Date(d.ctime * 1000).getHours();
-                                return h === selectedHour;
-                            });
-                            displayedDanmakus.value = filtered.sort((a, b) => a.progress - b.progress);
-                            currentSubFilt.value = { hour: selectedHour }
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => {
+                                    const h = new Date(d.ctime * 1000).getHours();
+                                    return h === selectedHour;
+                                }),
+                                { hour: selectedHour }
+                            );
                         });
                     }
 
@@ -718,7 +741,7 @@
                         charts.user = ECHARTS.init(chartEl);
                         charts.user.on('click', (params) => {
                             const selected = params.name;
-                            displayedDanmakus.value = manager.getDanmakusByUser(selected).sort((a, b) => a.progress - b.progress);
+                            displayedDanmakus.value = manager.filtered.filter(d => d.midHash === selected);
                             currentSubFilt.value = { user: selected };
                         });
                         // 点击标题切换展开状态
@@ -760,7 +783,7 @@
                                 yAxisIndex: 0,
                                 startValue: 0,
                                 endValue: userNames.length >= sc ? sc - 1 : userNames.length,
-                                width: 10
+                                width: 20
                             }
                         ],
                         series: [{
@@ -780,16 +803,29 @@
                     renderHourChart(manager.filtered);
                 }
 
+                async function clearSubFilter() {
+                    await updateDispDanmakus(manager.filtered, {});
+                }
                 function handleRowClick(row) {
                     if (!charts.user) return;
 
                     const userMid = row.midHash;
                     const option = charts.user.getOption();
 
+                    let el = doc.getElementById('wrapper-chart');
+                    while (el && el !== doc.body) {
+                        //寻找可以滚动的父级元素
+                        const overflowY = getComputedStyle(el).overflowY;
+                        const canScroll = overflowY === 'scroll' || overflowY === 'auto';
+                        if (canScroll && el.scrollHeight > el.clientHeight) {
+                            el.scrollTo({ top: 0, behavior: 'smooth' });
+                            break;
+                        }
+                        el = el.parentElement;
+                    }
+
                     const sc = isExpandedUserChart.value ? 20 : 8;
                     const scup = isExpandedUserChart.value ? 9 : 3;
-
-
                     const index = option.yAxis[0].data.indexOf(userMid);
                     if (index >= 0) {
                         charts.user.setOption({
@@ -818,29 +854,21 @@
                     }
                 }
 
-                function applyFilter() {
+                async function applyFilter() {
                     try {
                         const regex = new RegExp(filterText.value, 'i');
                         manager.filter(regex);
-                        displayedDanmakus.value = manager.getSortedDanmakus();
                         currentFilt.value = regex;
-                        currentSubFilt.value = {};
-                        const stats = manager.getStats();
-                        danmakuCount.value = { user: stats.length, dm: displayedDanmakus.value.length }
-                        updateChart(stats);
+                        await updateDispDanmakus(manager.filtered, {}, true);
                     } catch (e) {
                         console.warn(e);
                         alert('无效正则表达式');
                     }
                 }
-                function resetFilter() {
+                async function resetFilter() {
                     manager.reset();
-                    displayedDanmakus.value = manager.getSortedDanmakus();
                     currentFilt.value = '';
-                    currentSubFilt.value = {};
-                    const stats = manager.getStats();
-                    danmakuCount.value = { user: stats.length, dm: displayedDanmakus.value.length }
-                    updateChart(stats);
+                    await updateDispDanmakus(manager.filtered, {}, true);
                 }
 
                 async function getVideoData() {
@@ -897,12 +925,7 @@
                     const data = parseDanmakuXml(text);
                     manager = new DanmakuManager(data);
                     originDanmakuCount.value = data.length; // 原始弹幕数量
-                    displayedDanmakus.value = manager.getSortedDanmakus();
-                    const stats = manager.getStats();
-                    danmakuCount.value = { user: stats.length, dm: displayedDanmakus.value.length }
-                    updateChart(stats);
-                    await nextTick();
-                    loading.value = false;
+                    await updateDispDanmakus(manager.filtered, {}, true);
                 });
                 return {
                     displayedDanmakus,
@@ -918,6 +941,7 @@
                     isExpandedUserChart,
                     midHashOnClick,
                     handleRowClick,
+                    clearSubFilter,
                     formatProgress,
                     formatCtime,
                     formatTime,
@@ -925,7 +949,7 @@
                 };
             },
             template: `
-<el-container style="height: 100%;">
+<el-container style="height: 100%;" v-loading="loading">
     <!-- 左边 -->
     <el-aside width="50%" style="overflow-y: auto;">
         <!-- 上半部：标题区域 -->
@@ -1012,39 +1036,53 @@
                     </el-link>
                     条
                 </p>
-                <p style="color: gray">
+                <p style="
+                    background-color: #f4faff;
+                    border-left: 4px solid #409eff;
+                    padding: 10px 15px;
+                    border-radius: 4px;
+                    color: #333;
+                ">
                     <template v-if="currentFilt">
                         筛选：<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentFilt
                             }}</el-tag><br />
                     </template>
                     共有 {{ danmakuCount.user }} 位不同用户发送了 {{ danmakuCount.dm }} 条弹幕<br />
-                    <template v-if="currentSubFilt.user">
-                        用户<el-link type="primary" @click="midHashOnClick" style="vertical-align: baseline;">{{
-                            currentSubFilt.user }}</el-link>
-                        发送弹幕共 {{ displayedDanmakus.length }} 条
-                    </template>
-                    <template v-else-if="currentSubFilt.wordcloud">
-                        含词语<el-tag type="info" size="small" style="vertical-align: baseline;">{{
-                            currentSubFilt.wordcloud }}</el-tag>
+                    <template v-if="Object.keys(currentSubFilt).length">
+                        <template v-if="currentSubFilt.user">
+                            用户<el-link type="primary" @click="midHashOnClick" style="vertical-align: baseline;">{{
+                                currentSubFilt.user }}</el-link>发送
+                        </template>
+                        <template v-else-if="currentSubFilt.wordcloud">
+                            含词语<el-tag type="info" size="small" style="vertical-align: baseline;">{{
+                                currentSubFilt.wordcloud }}</el-tag>
+                        </template>
+                        <template v-else-if="currentSubFilt.date">
+                            日期<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentSubFilt.date
+                                }}</el-tag>
+                        </template>
+                        <template v-else-if="currentSubFilt.hour">
+                            每天<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentSubFilt.hour
+                                }}</el-tag>点
+                        </template>
                         弹幕共 {{ displayedDanmakus.length }} 条
-                    </template>
-                    <template v-else-if="currentSubFilt.date">
-                        日期<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentSubFilt.date
-                            }}</el-tag>
-                        弹幕共 {{ displayedDanmakus.length }} 条
-                    </template>
-                    <template v-else-if="currentSubFilt.hour">
-                        每天<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentSubFilt.hour
-                            }}</el-tag>点
-                        弹幕共 {{ displayedDanmakus.length }} 条
+                        <el-tag type="info" size="small" effect="light" round @click="clearSubFilter" style="
+                            width: 18px;
+                            height: 18px;
+                            padding: 0;
+                            vertical-align: baseline;
+                            cursor: pointer;
+                        " title="清除子筛选">
+                            ×
+                        </el-tag>
+
                     </template>
                 </p>
             </div>
 
             <!-- 下半部：弹幕表格 -->
             <div id="wrapper-table" style="height: 100%; display: flex; flex-direction: column;">
-                <el-table :data="displayedDanmakus" style="flex: 1;" height="0" border @row-click="handleRowClick"
-                    v-loading="loading">
+                <el-table :data="displayedDanmakus" style="flex: 1;" height="0" border @row-click="handleRowClick">
                     <el-table-column prop="progress" label="时间" align="left" width="80">
                         <template #default="{ row }">{{ formatProgress(row.progress) }}</template>
                     </el-table-column>
