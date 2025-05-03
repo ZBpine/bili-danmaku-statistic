@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.4.2
+// @version      1.4.4
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -15,7 +15,8 @@
 (function () {
     'use strict';
 
-    async function initIframeApp(iframe, videoData, danmakuData) {
+    // iframe里初始化Vue应用
+    async function initIframeApp(iframe, videoDataParam, danmakuDataParam) {
         const doc = iframe.contentDocument;
         const win = iframe.contentWindow;
 
@@ -46,137 +47,10 @@
         doc.body.style.margin = '0';
         doc.body.appendChild(appRoot);
 
-        renderDanmakuApp('#danmaku-app', win, doc, videoData, danmakuData);
-    }
-    // iframe里初始化Vue应用
-    function renderDanmakuApp(containerSelector, win, doc, videoDataParam, danmakuDataParam) {
+        // 挂载Vue
         const { createApp, ref, onMounted, nextTick } = win.Vue;
         const ELEMENT_PLUS = win.ElementPlus;
         const ECHARTS = win.echarts;
-
-        class DanmakuManager {
-            constructor(danmakuList) {
-                this.original = [...danmakuList].sort((a, b) => a.progress - b.progress);
-                this.filtered = [...this.original]; // 保持同步顺序
-            }
-
-            reset() {
-                this.filtered = [...this.original];
-            }
-
-            filter(regex) {
-                this.filtered = this.original.filter(d => regex.test(d.content));
-            }
-
-            getStats() {
-                const countMap = {};
-                for (const d of this.filtered) {
-                    countMap[d.midHash] = (countMap[d.midHash] || 0) + 1;
-                }
-                return Object.entries(countMap)
-                    .map(([user, count]) => ({ user, count }))
-                    .sort((a, b) => b.count - a.count);
-            }
-        }
-        const biliCrc2Mid = function () {
-            /*
-            函数来源
-            https://github.com/shafferjohn/bilibili-search/blob/master/crc32.js
-            */
-            const CRCPOLYNOMIAL = 0xEDB88320;
-            var startTime = new Date().getTime(),
-                crctable = new Array(256),
-                create_table = function () {
-                    var crcreg,
-                        i, j;
-                    for (i = 0; i < 256; ++i) {
-                        crcreg = i;
-                        for (j = 0; j < 8; ++j) {
-                            if ((crcreg & 1) != 0) {
-                                crcreg = CRCPOLYNOMIAL ^ (crcreg >>> 1);
-                            }
-                            else {
-                                crcreg >>>= 1;
-                            }
-                        }
-                        crctable[i] = crcreg;
-                    }
-                },
-                crc32 = function (input) {
-                    if (typeof (input) != 'string')
-                        input = input.toString();
-                    var crcstart = 0xFFFFFFFF, len = input.length, index;
-                    for (var i = 0; i < len; ++i) {
-                        index = (crcstart ^ input.charCodeAt(i)) & 0xff;
-                        crcstart = (crcstart >>> 8) ^ crctable[index];
-                    }
-                    return crcstart;
-                },
-                crc32lastindex = function (input) {
-                    if (typeof (input) != 'string')
-                        input = input.toString();
-                    var crcstart = 0xFFFFFFFF, len = input.length, index;
-                    for (var i = 0; i < len; ++i) {
-                        index = (crcstart ^ input.charCodeAt(i)) & 0xff;
-                        crcstart = (crcstart >>> 8) ^ crctable[index];
-                    }
-                    return index;
-                },
-                getcrcindex = function (t) {
-                    //if(t>0)
-                    //t-=256;
-                    for (var i = 0; i < 256; i++) {
-                        if (crctable[i] >>> 24 == t)
-                            return i;
-                    }
-                    return -1;
-                },
-                deepCheck = function (i, index) {
-                    var tc = 0x00, str = '',
-                        hash = crc32(i);
-                    tc = hash & 0xff ^ index[2];
-                    if (!(tc <= 57 && tc >= 48))
-                        return [0];
-                    str += tc - 48;
-                    hash = crctable[index[2]] ^ (hash >>> 8);
-                    tc = hash & 0xff ^ index[1];
-                    if (!(tc <= 57 && tc >= 48))
-                        return [0];
-                    str += tc - 48;
-                    hash = crctable[index[1]] ^ (hash >>> 8);
-                    tc = hash & 0xff ^ index[0];
-                    if (!(tc <= 57 && tc >= 48))
-                        return [0];
-                    str += tc - 48;
-                    hash = crctable[index[0]] ^ (hash >>> 8);
-                    return [1, str];
-                };
-            create_table();
-            var index = new Array(4);
-            console.log('初始化耗时：' + (new Date().getTime() - startTime) + 'ms');
-            return function (input) {
-                var ht = parseInt('0x' + input) ^ 0xffffffff,
-                    snum, i, lastindex, deepCheckData;
-                for (i = 3; i >= 0; i--) {
-                    index[3 - i] = getcrcindex(ht >>> (i * 8));
-                    snum = crctable[index[3 - i]];
-                    ht ^= snum >>> ((3 - i) * 8);
-                }
-                for (i = 0; i < 100000000; i++) {
-                    lastindex = crc32lastindex(i);
-                    if (lastindex == index[3]) {
-                        deepCheckData = deepCheck(i, index)
-                        if (deepCheckData[0])
-                            break;
-                    }
-                }
-
-                if (i == 100000000)
-                    return -1;
-                console.log('总耗时：' + (new Date().getTime() - startTime) + 'ms');
-                return i + '' + deepCheckData[1];
-            }
-        }
         const app = createApp({
             setup() {
                 const displayedDanmakus = ref([]);
@@ -197,6 +71,130 @@
                     date: null,
                     hour: null
                 };
+
+                class DanmakuManager {
+                    constructor(danmakuList) {
+                        this.original = [...danmakuList].sort((a, b) => a.progress - b.progress);
+                        this.filtered = [...this.original]; // 保持同步顺序
+                    }
+
+                    reset() {
+                        this.filtered = [...this.original];
+                    }
+
+                    filter(regex) {
+                        this.filtered = this.original.filter(d => regex.test(d.content));
+                    }
+
+                    getStats() {
+                        const countMap = {};
+                        for (const d of this.filtered) {
+                            countMap[d.midHash] = (countMap[d.midHash] || 0) + 1;
+                        }
+                        return Object.entries(countMap)
+                            .map(([user, count]) => ({ user, count }))
+                            .sort((a, b) => b.count - a.count);
+                    }
+                }
+                const biliCrc2Mid = function () {
+                    /*
+                    函数来源
+                    https://github.com/shafferjohn/bilibili-search/blob/master/crc32.js
+                    */
+                    const CRCPOLYNOMIAL = 0xEDB88320;
+                    var startTime = new Date().getTime(),
+                        crctable = new Array(256),
+                        create_table = function () {
+                            var crcreg,
+                                i, j;
+                            for (i = 0; i < 256; ++i) {
+                                crcreg = i;
+                                for (j = 0; j < 8; ++j) {
+                                    if ((crcreg & 1) != 0) {
+                                        crcreg = CRCPOLYNOMIAL ^ (crcreg >>> 1);
+                                    }
+                                    else {
+                                        crcreg >>>= 1;
+                                    }
+                                }
+                                crctable[i] = crcreg;
+                            }
+                        },
+                        crc32 = function (input) {
+                            if (typeof (input) != 'string')
+                                input = input.toString();
+                            var crcstart = 0xFFFFFFFF, len = input.length, index;
+                            for (var i = 0; i < len; ++i) {
+                                index = (crcstart ^ input.charCodeAt(i)) & 0xff;
+                                crcstart = (crcstart >>> 8) ^ crctable[index];
+                            }
+                            return crcstart;
+                        },
+                        crc32lastindex = function (input) {
+                            if (typeof (input) != 'string')
+                                input = input.toString();
+                            var crcstart = 0xFFFFFFFF, len = input.length, index;
+                            for (var i = 0; i < len; ++i) {
+                                index = (crcstart ^ input.charCodeAt(i)) & 0xff;
+                                crcstart = (crcstart >>> 8) ^ crctable[index];
+                            }
+                            return index;
+                        },
+                        getcrcindex = function (t) {
+                            //if(t>0)
+                            //t-=256;
+                            for (var i = 0; i < 256; i++) {
+                                if (crctable[i] >>> 24 == t)
+                                    return i;
+                            }
+                            return -1;
+                        },
+                        deepCheck = function (i, index) {
+                            var tc = 0x00, str = '',
+                                hash = crc32(i);
+                            tc = hash & 0xff ^ index[2];
+                            if (!(tc <= 57 && tc >= 48))
+                                return [0];
+                            str += tc - 48;
+                            hash = crctable[index[2]] ^ (hash >>> 8);
+                            tc = hash & 0xff ^ index[1];
+                            if (!(tc <= 57 && tc >= 48))
+                                return [0];
+                            str += tc - 48;
+                            hash = crctable[index[1]] ^ (hash >>> 8);
+                            tc = hash & 0xff ^ index[0];
+                            if (!(tc <= 57 && tc >= 48))
+                                return [0];
+                            str += tc - 48;
+                            hash = crctable[index[0]] ^ (hash >>> 8);
+                            return [1, str];
+                        };
+                    create_table();
+                    var index = new Array(4);
+                    console.log('初始化耗时：' + (new Date().getTime() - startTime) + 'ms');
+                    return function (input) {
+                        var ht = parseInt('0x' + input) ^ 0xffffffff,
+                            snum, i, lastindex, deepCheckData;
+                        for (i = 3; i >= 0; i--) {
+                            index[3 - i] = getcrcindex(ht >>> (i * 8));
+                            snum = crctable[index[3 - i]];
+                            ht ^= snum >>> ((3 - i) * 8);
+                        }
+                        for (i = 0; i < 100000000; i++) {
+                            lastindex = crc32lastindex(i);
+                            if (lastindex == index[3]) {
+                                deepCheckData = deepCheck(i, index)
+                                if (deepCheckData[0])
+                                    break;
+                            }
+                        }
+
+                        if (i == 100000000)
+                            return -1;
+                        console.log('总耗时：' + (new Date().getTime() - startTime) + 'ms');
+                        return i + '' + deepCheckData[1];
+                    }
+                }
 
                 function formatProgress(ms) {
                     const s = Math.floor(ms / 1000);
@@ -331,7 +329,7 @@
                     if (!isNewTag.value) openPanelInNewTab();
                     else {
                         if (window.opener) {
-                            console.log('[子页面] 请求保存页面');
+                            logTag('[子页面] 请求保存页面');
                             window.opener.postMessage({ type: 'SUBTAG_REQUEST_SAFE' }, '*');
                         }
                     }
@@ -449,7 +447,6 @@
                             const targetTime = params.value[0] * 1000;
                             const list = displayedDanmakus.value;
                             if (!list.length) return;
-
                             // 找到最接近的弹幕 index
                             let closestIndex = 0;
                             let minDiff = Math.abs(list[0].progress - targetTime);
@@ -460,7 +457,6 @@
                                     minDiff = diff;
                                 }
                             }
-
                             // 使用 Element Plus 表格 ref 滚动到该行
                             nextTick(() => {
                                 const rows = doc.querySelectorAll('.el-table__body-wrapper tbody tr');
@@ -470,11 +466,9 @@
                                         behavior: 'smooth',
                                         block: 'center'
                                     });
-
                                     const original = row.style.backgroundColor;
                                     row.style.transition = 'background-color 0.3s ease';
                                     row.style.backgroundColor = '#ecf5ff';
-
                                     setTimeout(() => {
                                         row.style.backgroundColor = original || '';
                                     }, 1500);
@@ -1006,74 +1000,104 @@
 `
         });
         app.use(ELEMENT_PLUS);
-        app.mount(containerSelector);
+        app.mount('#danmaku-app');
     }
+
+    function logTag(...args) {
+        const tag = 'Danmaku Statistic';
+        const style = 'background: #409eff; color: white; padding: 2px 6px; border-radius: 3px;';
+        console.log(`%c${tag}`, style, ...args);
+    }
+
     let globalVideoData = null;
     let globalDanmakuData = null;
-    async function getVideoData() {
-        const url = location.href;
-        let bvid = null;
-
-        // 判断是否为 watchlater 链接
-        if (url.includes('/list/watchlater')) {
-            const match = url.match(/[?&]bvid=(BV\w+)/);
-            if (match) bvid = match[1];
-        } else {
-            const match = url.match(/\/video\/(BV\w+)/);
-            if (match) bvid = match[1];
+    async function fetchResources() {
+        function parseDanmakuXml(xmlText) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlText, 'application/xml');
+            const dElements = xmlDoc.getElementsByTagName('d');
+            const danmakus = [];
+            for (const d of dElements) {
+                const pAttr = d.getAttribute('p');
+                if (!pAttr) continue;
+                const parts = pAttr.split(',');
+                if (parts.length < 8) continue;
+                danmakus.push({
+                    progress: parseFloat(parts[0]) * 1000,
+                    mode: parseInt(parts[1]),
+                    fontsize: parseInt(parts[2]),
+                    color: parseInt(parts[3]),
+                    ctime: parseInt(parts[4]),
+                    pool: parseInt(parts[5]),
+                    midHash: parts[6],
+                    dmid: parts[7],
+                    weight: parseInt(parts[8]),
+                    content: d.textContent.trim()
+                });
+            }
+            return danmakus;
         }
+        function parseBiliUrl(url) {
+            let bvid = null;
+            let p = null;
 
-        if (!bvid) {
-            console.error('找不到 BVID');
-            return null;
-        }
-        try {
-            const res = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`);
-            const json = await res.json();
-            if (json && json.data) {
-                const data = json.data;
-                // 读取 p 参数
-                const pMatch = url.match(/[?&]p=(\d+)/);
-                if (pMatch) {
-                    const pageIndex = parseInt(pMatch[1], 10) - 1;
-                    if (!isNaN(pageIndex) && data.pages && data.pages[pageIndex]) {
-                        data.page_index = pageIndex;
-                        data.page_cur = data.pages[pageIndex];
-                    }
+            const bvidMatch = url.match(/BV[a-zA-Z0-9]+/);
+            if (bvidMatch) bvid = bvidMatch[0];
+
+            // 读取 p 参数
+            const pMatch = url.match(/[?&]p=(\d+)/);
+            if (pMatch) {
+                const parsedP = parseInt(pMatch[1], 10);
+                if (!isNaN(parsedP) && parsedP >= 1) {
+                    p = parsedP;
                 }
-                return data;
-            } else {
-                console.error('获取视频基本信息失败', json);
+            }
+            return { bvid, p };
+        }
+        async function getVideoData(bvid, p) {
+            if (!bvid) {
+                console.error('找不到 BVID');
                 return null;
             }
-        } catch (e) {
-            console.error('请求出错', e);
-            return null;
+            try {
+                const res = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`);
+                const json = await res.json();
+                if (json && json.data) {
+                    const data = json.data;
+                    if (!isNaN(p) && data.pages && data.pages[p - 1]) {
+                        data.page_index = p - 1;
+                        data.page_cur = data.pages[p - 1];
+                    }
+                    return data;
+                } else {
+                    console.error('获取视频信息失败', json);
+                    return null;
+                }
+            } catch (e) {
+                console.error('请求出错', e);
+                return null;
+            }
         }
-    }
-    function parseDanmakuXml(xmlText) {
-        const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(xmlText, 'application/xml');
-        const dElements = xmlDoc.getElementsByTagName('d');
-        const danmakus = [];
-        for (const d of dElements) {
-            const pAttr = d.getAttribute('p');
-            if (!pAttr) continue;
-            const parts = pAttr.split(',');
-            if (parts.length < 8) continue;
-            danmakus.push({
-                progress: parseFloat(parts[0]) * 1000,
-                mode: parseInt(parts[1]),
-                fontsize: parseInt(parts[2]),
-                color: parseInt(parts[3]),
-                ctime: parseInt(parts[4]),
-                midHash: parts[6],
-                id: parts[7],
-                weight: parseInt(parts[8]),
-                content: d.textContent.trim()
-            });
+        async function getDanmakuData(videoData) {
+            try {
+                const oid = videoData.page_cur?.cid || videoData.cid;
+                if (!oid) throw new Error('无法获取弹幕 chatid');
+
+                const res = await fetch(`https://api.bilibili.com/x/v1/dm/list.so?oid=${oid}`);
+                if (!res.ok) throw new Error(`弹幕接口请求失败，状态码：${res.status}`);
+
+                const text = await res.text();
+                return parseDanmakuXml(text);
+            } catch (err) {
+                console.error('获取弹幕数据失败:', err);
+                return null;
+            }
         }
-        return danmakus;
+
+        const { bvid, p } = parseBiliUrl(location.href);
+        const videoData = await getVideoData(bvid, p);
+        const danmakuData = await getDanmakuData(videoData);
+        return { videoData, danmakuData };
     }
     // 插入按钮
     function insertButton() {
@@ -1118,7 +1142,7 @@
             btn.style.border = 'none';
         };
 
-        btn.onclick = openIframe;
+        btn.onclick = openPanel;
 
         const style = document.createElement('style');
         style.textContent = `
@@ -1139,8 +1163,8 @@
 
         document.body.appendChild(btn);
     }
-    // 打开iframe面板
-    function openIframe() {
+    // 打开iframe弹幕统计面板
+    function openPanel() {
         if (document.getElementById('danmaku-stat-iframe')) return;
 
         // 创建蒙层
@@ -1175,16 +1199,9 @@
         iframe.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
         iframe.onload = async () => {
             try {
-                const videoData = await getVideoData();
-                const oid = videoData.page_cur?.cid || videoData.cid;
-                if (!oid) throw new Error('无法获取弹幕 chatid (oid)');
-
-                const res = await fetch(`https://api.bilibili.com/x/v1/dm/list.so?oid=${oid}`);
-                if (!res.ok) throw new Error(`弹幕接口请求失败，状态码：${res.status}`);
-
-                const text = await res.text();
-                const danmakuData = parseDanmakuXml(text);
-
+                const { videoData, danmakuData } = await fetchResources();
+                if (!videoData || !danmakuData) throw new Error('数据获取失败');
+                else logTag('数据获取完成');
                 globalVideoData = videoData;
                 globalDanmakuData = danmakuData;
 
@@ -1196,7 +1213,7 @@
         }
         document.body.appendChild(iframe);
     }
-    // 打开新标签页面板
+    // 打开新标签页弹幕统计面板
     function openPanelInNewTab() {
         const htmlContent = `
         <!DOCTYPE html>
@@ -1214,12 +1231,16 @@
         </head>
         <body>
         <script>
-            ${renderDanmakuApp.toString()}
             ${initIframeApp.toString()}
+            ${logTag.toString()}
             window.addEventListener('message', function(event) {
                 const { videoData, danmakuData } = event.data || {};
-                if (!videoData || !danmakuData) return;
-                console.log('[子页面] 收到 videoData 和 danmakuData');
+                if (!videoData || !danmakuData) {
+                    throw new Error('数据获取失败');
+                    return;
+                } else {
+                    logTag('[子页面] 收到 videoData 和 danmakuData');
+                }
                 const iframe = document.createElement('iframe');
                 iframe.id = 'danmaku-stat-iframe';
                 iframe.style.position = 'fixed';
@@ -1239,7 +1260,7 @@
             // 主动请求数据
             window.addEventListener('load', () => {
                 if (window.opener) {
-                    console.log('[子页面] 请求数据');
+                    logTag('[子页面] 请求数据');
                     window.opener.postMessage({ type: 'SUBTAG_REQUEST_DATA' }, '*');
                 }
             });
@@ -1255,7 +1276,7 @@
             return;
         }
     }
-    // 保存面板
+    // 保存弹幕统计面板
     function savePanel() {
         const safeVideoData = JSON.stringify(globalVideoData || {});
         const safeDanmukuData = JSON.stringify(globalDanmakuData || {});
@@ -1275,10 +1296,10 @@
         </head>
         <body>
         <script>
-            ${renderDanmakuApp.toString()}
-            ${initIframeApp.toString()}
             const videoData = ${safeVideoData};
             const danmukuData = ${safeDanmukuData};
+            ${initIframeApp.toString()}
+            ${logTag.toString()}
             const iframe = document.createElement('iframe');
             iframe.id = 'danmaku-stat-iframe';
             iframe.style.position = 'fixed';
@@ -1307,15 +1328,14 @@
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(blobUrl);
-
     }
     // 监听新标签页消息
     window.addEventListener('message', (event) => {
         if (event.data?.type === 'SUBTAG_REQUEST_DATA') {
-            console.log('[主页面] 收到数据请求');
+            logTag('[主页面] 收到数据请求');
             event.source.postMessage({ videoData: globalVideoData, danmakuData: globalDanmakuData }, '*');
         } else if (event.data?.type === 'SUBTAG_REQUEST_SAFE') {
-            console.log('[主页面] 收到保存请求');
+            logTag('[主页面] 收到保存请求');
             savePanel();
         }
     });
