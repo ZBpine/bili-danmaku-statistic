@@ -1,0 +1,1025 @@
+
+        <!DOCTYPE html>
+        <html lang="zh">
+        <head>
+        <meta charset="UTF-8">
+        <title>Bilibili 弹幕统计</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            html, body {
+                margin: 0;
+                padding: 0;
+            }
+        </style>
+        </head>
+        <body>
+        <script>
+            function renderDanmakuApp(containerSelector, win, doc, videoDataParam, danmakuDataParam) {
+        const { createApp, ref, onMounted, nextTick } = win.Vue;
+        const ELEMENT_PLUS = win.ElementPlus;
+        const ECHARTS = win.echarts;
+
+        class DanmakuManager {
+            constructor(danmakuList) {
+                this.original = [...danmakuList].sort((a, b) => a.progress - b.progress);
+                this.filtered = [...this.original]; // 保持同步顺序
+            }
+
+            reset() {
+                this.filtered = [...this.original];
+            }
+
+            filter(regex) {
+                this.filtered = this.original.filter(d => regex.test(d.content));
+            }
+
+            getStats() {
+                const countMap = {};
+                for (const d of this.filtered) {
+                    countMap[d.midHash] = (countMap[d.midHash] || 0) + 1;
+                }
+                return Object.entries(countMap)
+                    .map(([user, count]) => ({ user, count }))
+                    .sort((a, b) => b.count - a.count);
+            }
+        }
+        const biliCrc2Mid = function () {
+            /*
+            函数来源
+            https://github.com/shafferjohn/bilibili-search/blob/master/crc32.js
+            */
+            const CRCPOLYNOMIAL = 0xEDB88320;
+            var startTime = new Date().getTime(),
+                crctable = new Array(256),
+                create_table = function () {
+                    var crcreg,
+                        i, j;
+                    for (i = 0; i < 256; ++i) {
+                        crcreg = i;
+                        for (j = 0; j < 8; ++j) {
+                            if ((crcreg & 1) != 0) {
+                                crcreg = CRCPOLYNOMIAL ^ (crcreg >>> 1);
+                            }
+                            else {
+                                crcreg >>>= 1;
+                            }
+                        }
+                        crctable[i] = crcreg;
+                    }
+                },
+                crc32 = function (input) {
+                    if (typeof (input) != 'string')
+                        input = input.toString();
+                    var crcstart = 0xFFFFFFFF, len = input.length, index;
+                    for (var i = 0; i < len; ++i) {
+                        index = (crcstart ^ input.charCodeAt(i)) & 0xff;
+                        crcstart = (crcstart >>> 8) ^ crctable[index];
+                    }
+                    return crcstart;
+                },
+                crc32lastindex = function (input) {
+                    if (typeof (input) != 'string')
+                        input = input.toString();
+                    var crcstart = 0xFFFFFFFF, len = input.length, index;
+                    for (var i = 0; i < len; ++i) {
+                        index = (crcstart ^ input.charCodeAt(i)) & 0xff;
+                        crcstart = (crcstart >>> 8) ^ crctable[index];
+                    }
+                    return index;
+                },
+                getcrcindex = function (t) {
+                    //if(t>0)
+                    //t-=256;
+                    for (var i = 0; i < 256; i++) {
+                        if (crctable[i] >>> 24 == t)
+                            return i;
+                    }
+                    return -1;
+                },
+                deepCheck = function (i, index) {
+                    var tc = 0x00, str = '',
+                        hash = crc32(i);
+                    tc = hash & 0xff ^ index[2];
+                    if (!(tc <= 57 && tc >= 48))
+                        return [0];
+                    str += tc - 48;
+                    hash = crctable[index[2]] ^ (hash >>> 8);
+                    tc = hash & 0xff ^ index[1];
+                    if (!(tc <= 57 && tc >= 48))
+                        return [0];
+                    str += tc - 48;
+                    hash = crctable[index[1]] ^ (hash >>> 8);
+                    tc = hash & 0xff ^ index[0];
+                    if (!(tc <= 57 && tc >= 48))
+                        return [0];
+                    str += tc - 48;
+                    hash = crctable[index[0]] ^ (hash >>> 8);
+                    return [1, str];
+                };
+            create_table();
+            var index = new Array(4);
+            console.log('初始化耗时：' + (new Date().getTime() - startTime) + 'ms');
+            return function (input) {
+                var ht = parseInt('0x' + input) ^ 0xffffffff,
+                    snum, i, lastindex, deepCheckData;
+                for (i = 3; i >= 0; i--) {
+                    index[3 - i] = getcrcindex(ht >>> (i * 8));
+                    snum = crctable[index[3 - i]];
+                    ht ^= snum >>> ((3 - i) * 8);
+                }
+                for (i = 0; i < 100000000; i++) {
+                    lastindex = crc32lastindex(i);
+                    if (lastindex == index[3]) {
+                        deepCheckData = deepCheck(i, index)
+                        if (deepCheckData[0])
+                            break;
+                    }
+                }
+
+                if (i == 100000000)
+                    return -1;
+                console.log('总耗时：' + (new Date().getTime() - startTime) + 'ms');
+                return i + '' + deepCheckData[1];
+            }
+        }
+        const app = createApp({
+            setup() {
+                const displayedDanmakus = ref([]);
+                const filterText = ref('^(哈|呵|h|ha|HA|H+|233+)+$');
+                const originDanmakuCount = ref(0);
+                const currentFilt = ref('');
+                const currentSubFilt = ref({});
+                const danmakuCount = ref({ user: 0, dm: 0 });
+                const videoData = ref(videoDataParam);
+                const loading = ref(true);
+                const isExpandedUserChart = ref(false);
+                const isNewTag = ref(!(typeof openPanelInNewTab === 'function'));
+                let manager = null;
+                let charts = {
+                    user: null,
+                    wordcloud: null,
+                    density: null,
+                    date: null,
+                    hour: null
+                };
+
+                function formatProgress(ms) {
+                    const s = Math.floor(ms / 1000);
+                    const min = String(Math.floor(s / 60)).padStart(2, '0');
+                    const sec = String(s % 60).padStart(2, '0');
+                    return `${min}:${sec}`;
+                }
+                function formatCtime(t) {
+                    const d = new Date(t * 1000);
+                    return d.getFullYear() + '-' +
+                        String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                        String(d.getDate()).padStart(2, '0') + ' ' +
+                        String(d.getHours()).padStart(2, '0') + ':' +
+                        String(d.getMinutes()).padStart(2, '0');
+                }
+                function formatTime(ts) {
+                    const d = new Date(ts * 1000);
+                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                }
+
+                async function shareImage() {
+                    const html2canvas = win.html2canvas;
+                    if (!html2canvas) {
+                        ELEMENT_PLUS.ElMessage.error('html2canvas 加载失败');
+                        return;
+                    }
+                    const domtoimage = win.domtoimage;
+                    if (!domtoimage) {
+                        ELEMENT_PLUS.ElMessage.error('dom-to-image-more 加载失败');
+                        return;
+                    }
+
+                    const titleWrapper = doc.getElementById('wrapper-title');
+                    const tableWrapper = doc.getElementById('wrapper-table');
+                    const chartWrapper = doc.getElementById('wrapper-chart');
+
+                    if (!titleWrapper || !tableWrapper || !chartWrapper) {
+                        ELEMENT_PLUS.ElMessage.error('找不到截图区域');
+                        return;
+                    }
+                    loading.value = true;
+                    try {
+                        titleWrapper.style.paddingBottom = '10px';  //dom-to-image-more会少截
+                        tableWrapper.style.paddingBottom = '40px';
+                        await nextTick();
+
+                        const loadImage = (blob) => new Promise((resolve) => {
+                            const img = new Image();
+                            img.onload = () => resolve(img);
+                            img.src = URL.createObjectURL(blob);
+                        });
+
+                        const scale = window.devicePixelRatio;
+                        //title使用dom-to-image-more截图，table和chart使用html2canvas截图
+                        const titleBlob = await domtoimage.toBlob(titleWrapper, {
+                            style: {
+                                transform: `scale(${scale})`,
+                                transformOrigin: 'top left'
+                            },
+                            width: titleWrapper.offsetWidth * scale,
+                            height: titleWrapper.offsetHeight * scale
+                        });
+                        const titleImg = await loadImage(titleBlob);
+
+                        const [titleCanvas, tableCanvas, chartCanvas] = await Promise.all([
+                            //foreignObjectRendering开启则Echart无法显示，关闭则el-tag没有文字。
+                            html2canvas(titleWrapper, {
+                                useCORS: true, backgroundColor: '#fff', scale: scale,
+                                foreignObjectRendering: true
+                            }),
+                            html2canvas(tableWrapper, { useCORS: true, backgroundColor: '#fff', scale: scale }),
+                            html2canvas(chartWrapper, { useCORS: true, backgroundColor: '#fff', scale: scale })
+                        ]);
+
+                        // 计算总大小
+                        const totalWidth = Math.max(titleImg.width, tableCanvas.width, chartCanvas.width) * 1.1;
+                        const totalHeight = titleImg.height + tableCanvas.height + chartCanvas.height;
+
+                        // 合并成一张新 canvas
+                        const finalCanvas = document.createElement('canvas');
+                        finalCanvas.width = totalWidth;
+                        finalCanvas.height = totalHeight;
+                        const ctx = finalCanvas.getContext('2d');
+
+                        // 计算水平居中位置
+                        const titleX = (totalWidth - titleImg.width) / 2;
+                        const tableX = (totalWidth - tableCanvas.width) / 2;
+                        const chartX = (totalWidth - chartCanvas.width) / 2;
+
+                        // 绘制
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, totalWidth, totalHeight);
+                        // 拼接两个 canvas（上下排列）
+                        ctx.drawImage(titleImg, titleX, 0);
+                        ctx.drawImage(tableCanvas, tableX, titleImg.height);
+                        ctx.drawImage(chartCanvas, chartX, titleImg.height + tableCanvas.height);
+
+                        // 输出图片
+                        finalCanvas.toBlob(blob => {
+                            const blobUrl = URL.createObjectURL(blob);
+                            ELEMENT_PLUS.ElMessageBox({
+                                title: '截图预览',
+                                dangerouslyUseHTMLString: true,
+                                message: `
+                                <a href="${blobUrl}" target="_blank" title="点击查看大图">
+                                    <img src="${blobUrl}" style="max-width:100%; max-height:80vh; cursor: zoom-in;" />
+                                </a>
+                                `,
+                                showCancelButton: true,
+                                confirmButtonText: '保存图片',
+                                cancelButtonText: '关闭',
+                            }).then(() => {
+                                const link = doc.createElement('a');
+                                link.download = 'bilibili_danmaku_statistics.png';
+                                link.href = blobUrl;
+                                link.click();
+                                URL.revokeObjectURL(blobUrl); // 可选：释放内存
+                            }).catch(() => {
+                                URL.revokeObjectURL(blobUrl);
+                            });
+                        });
+                    } catch (err) {
+                        console.error(err);
+                        ELEMENT_PLUS.ElMessage.error('截图生成失败');
+                    } finally {
+                        titleWrapper.style.paddingBottom = '';
+                        tableWrapper.style.paddingBottom = '';
+                        loading.value = false;
+                    }
+                }
+                function openInNewTab() {
+                    if (!isNewTag.value) openPanelInNewTab();
+                    else {
+                        if (window.opener) {
+                            console.log('[子页面] 请求保存页面');
+                            window.opener.postMessage({ type: 'SUBTAG_REQUEST_SAFE' }, '*');
+                        }
+                    }
+                }
+
+                function midHashOnClick() {
+                    if (!currentSubFilt.value.user) return;
+                    ELEMENT_PLUS.ElMessageBox.confirm(
+                        `是否尝试反查用户ID？
+                        <p style="margin-top: 10px; font-size: 12px; color: gray;">
+                            可能需要一段时间，且10位数以上ID容易查错
+                        </p>`,
+                        '提示',
+                        {
+                            dangerouslyUseHTMLString: true,
+                            confirmButtonText: '是',
+                            cancelButtonText: '否',
+                            type: 'warning',
+                        }
+                    ).then(() => {
+                        // 开始反查用户ID
+                        var midcrc = new biliCrc2Mid();
+                        var result = midcrc(currentSubFilt.value.user);
+                        if (result && result !== '-1') {
+                            ELEMENT_PLUS.ElMessageBox.alert(
+                                `已查到用户ID：
+                                <a href="https://space.bilibili.com/${result}" target="_blank" style="color:#409eff;text-decoration:none;">
+                                    点击访问用户空间
+                                </a>
+                                <p style="margin-top: 10px; font-size: 12px; color: gray;">
+                                    此ID通过弹幕哈希本地计算得出，非官方公开数据，请谨慎使用
+                                </p>`,
+                                '查找成功',
+                                {
+                                    dangerouslyUseHTMLString: true,
+                                    confirmButtonText: '确定',
+                                    type: 'success',
+                                }
+                            );
+                        } else {
+                            ELEMENT_PLUS.ElMessage.error('未能查到用户ID或用户不存在');
+                        }
+                    }).catch(() => {
+                        // 用户点击了取消，只复制midHash
+                        navigator.clipboard.writeText(currentSubFilt.value.user).then(() => {
+                            ELEMENT_PLUS.ElMessage.success('midHash已复制到剪贴板');
+                        }).catch(() => {
+                            ELEMENT_PLUS.ElMessage.error('复制失败');
+                        });
+                    });
+                }
+
+                async function updateDispDanmakus(data, text, ifchart) {
+                    loading.value = true;
+                    await nextTick();
+                    await new Promise(resolve => setTimeout(resolve, 10)); //等待v-loading渲染
+                    try {
+                        displayedDanmakus.value = data;
+                        currentSubFilt.value = text;
+                        if (ifchart) {
+                            const stats = manager.getStats();
+                            updateChart(stats);
+                            danmakuCount.value = { user: stats.length, dm: displayedDanmakus.value.length }
+                        }
+                        await nextTick();
+                    } catch (err) {
+                        console.error(err);
+                        ELEMENT_PLUS.ElMessage.error('数据显示错误');
+                    } finally {
+                        loading.value = false;
+                    }
+                }
+                function renderWordCloud(data) {
+                    const el = doc.getElementById('chart-wordcloud');
+                    if (!el) return;
+                    if (!charts.wordcloud) {
+                        charts.wordcloud = ECHARTS.init(el);
+                        charts.wordcloud.on('click', async (params) => {
+                            const keyword = params.name;
+                            const regex = new RegExp(keyword, 'i');
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => regex.test(d.content)),
+                                { wordcloud: keyword }
+                            );
+                        });
+                    }
+                    else charts.wordcloud.clear();
+
+                    const freq = {};
+                    data.forEach(d => {
+                        d.content.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ').split(/\s+/).forEach(w => {
+                            if (w.length >= 2) freq[w] = (freq[w] || 0) + 1;
+                        });
+                    });
+                    const list = Object.entries(freq).map(([name, value]) => ({ name, value }));
+                    charts.wordcloud.setOption({
+                        title: { text: '弹幕词云' },
+                        tooltip: {},
+                        series: [{
+                            type: 'wordCloud',
+                            gridSize: 8,
+                            sizeRange: [12, 40],
+                            rotationRange: [0, 0],
+                            shape: 'circle',
+                            data: list
+                        }]
+                    });
+                }
+                function renderDensityChart(data) {
+                    const el = doc.getElementById('chart-density');
+                    if (!el) return;
+                    if (!charts.density) {
+                        charts.density = ECHARTS.init(el);
+                        charts.density.on('click', function (params) {
+                            const targetTime = params.value[0] * 1000;
+                            const list = displayedDanmakus.value;
+                            if (!list.length) return;
+
+                            // 找到最接近的弹幕 index
+                            let closestIndex = 0;
+                            let minDiff = Math.abs(list[0].progress - targetTime);
+                            for (let i = 1; i < list.length; i++) {
+                                const diff = Math.abs(list[i].progress - targetTime);
+                                if (diff < minDiff) {
+                                    closestIndex = i;
+                                    minDiff = diff;
+                                }
+                            }
+
+                            // 使用 Element Plus 表格 ref 滚动到该行
+                            nextTick(() => {
+                                const rows = doc.querySelectorAll('.el-table__body-wrapper tbody tr');
+                                const row = rows?.[closestIndex];
+                                if (row) {
+                                    row.scrollIntoView({
+                                        behavior: 'smooth',
+                                        block: 'center'
+                                    });
+
+                                    const original = row.style.backgroundColor;
+                                    row.style.transition = 'background-color 0.3s ease';
+                                    row.style.backgroundColor = '#ecf5ff';
+
+                                    setTimeout(() => {
+                                        row.style.backgroundColor = original || '';
+                                    }, 1500);
+                                }
+                            });
+                        });
+
+                    }
+
+                    const duration = videoData.value.duration * 1000; // ms
+                    const minutes = duration / 1000 / 60;
+
+                    // 动态设置 bin 数量
+                    let binCount = 100;
+                    if (minutes <= 10) binCount = 60;
+                    else if (minutes <= 30) binCount = 90;
+                    else if (minutes <= 60) binCount = 60;
+                    else binCount = 30;
+
+                    const bins = new Array(binCount).fill(0);
+                    data.forEach(d => {
+                        const idx = Math.floor((d.progress / duration) * binCount);
+                        bins[Math.min(idx, bins.length - 1)]++;
+                    });
+
+                    const dataPoints = [];
+                    for (let i = 0; i < binCount; i++) {
+                        const timeSec = Math.floor((i * duration) / binCount / 1000);
+                        dataPoints.push({
+                            value: [timeSec, bins[i]],
+                            name: formatProgress(timeSec * 1000)
+                        });
+                    }
+
+                    charts.density.setOption({
+                        title: { text: '弹幕密度分布' },
+                        tooltip: {
+                            trigger: 'axis',
+                            formatter: function (params) {
+                                const sec = params[0].value[0];
+                                return `时间段：${formatProgress(sec * 1000)}<br/>弹幕数：${params[0].value[1]}`;
+                            },
+                            axisPointer: {
+                                type: 'line'
+                            }
+                        },
+                        xAxis: {
+                            type: 'value',
+                            name: '时间',
+                            min: 0,
+                            max: Math.ceil(duration / 1000),
+                            axisLabel: {
+                                formatter: val => formatProgress(val * 1000)
+                            }
+                        },
+                        yAxis: {
+                            type: 'value',
+                            name: '弹幕数量'
+                        },
+                        series: [{
+                            data: dataPoints,
+                            type: 'line',
+                            smooth: true,
+                            areaStyle: {} // 可选加背景区域
+                        }]
+                    });
+                }
+                function renderDateChart(data) {
+                    const el = doc.getElementById('chart-date');
+                    if (!el) return;
+                    if (!charts.date) {
+                        charts.date = ECHARTS.init(el);
+                        charts.date.on('click', async (params) => {
+                            const selectedDate = params.name;
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
+                                { date: selectedDate }
+                            );
+                        });
+                    }
+
+                    const countMap = {};
+                    data.forEach(d => {
+                        const date = formatTime(d.ctime).split(' ')[0];
+                        countMap[date] = (countMap[date] || 0) + 1;
+                    });
+                    // 按日期升序排序
+                    const sorted = Object.entries(countMap).sort((a, b) => new Date(a[0]) - new Date(b[0]));
+                    const x = sorted.map(([date]) => date);
+                    const y = sorted.map(([, count]) => count);
+
+                    const totalDays = x.length;
+                    const startIdx = Math.max(0, totalDays - 30); // 只显示最近30天
+                    charts.date.setOption({
+                        title: { text: '发送日期分布' },
+                        tooltip: {},
+                        xAxis: { type: 'category', data: x },
+                        yAxis: { type: 'value', name: '弹幕数量' },
+                        dataZoom: [
+                            {
+                                type: 'slider',
+                                startValue: startIdx,
+                                endValue: totalDays - 1,
+                                xAxisIndex: 0,
+                                height: 20
+                            }
+                        ],
+                        series: [{ type: 'bar', data: y }]
+                    });
+                }
+                function renderHourChart(data) {
+                    const el = doc.getElementById('chart-hour');
+                    if (!el) return;
+                    if (!charts.hour) {
+                        charts.hour = ECHARTS.init(el);
+                        charts.hour.on('click', async (params) => {
+                            const selectedHour = parseInt(params.name);
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => {
+                                    const h = new Date(d.ctime * 1000).getHours();
+                                    return h === selectedHour;
+                                }),
+                                { hour: selectedHour }
+                            );
+                        });
+                    }
+
+                    const hours = new Array(24).fill(0);
+                    data.forEach(d => {
+                        const hour = new Date(d.ctime * 1000).getHours();
+                        hours[hour]++;
+                    });
+                    charts.hour.setOption({
+                        title: { text: '发送时间分布' },
+                        tooltip: {},
+                        xAxis: { type: 'category', data: hours.map((_, i) => i + '时') },
+                        yAxis: { type: 'value', name: '弹幕数量' },
+                        series: [{ type: 'bar', data: hours }]
+                    });
+                }
+                function updateChart(stats) {
+                    const chartEl = doc.getElementById('chart-user');
+                    if (!chartEl) return setTimeout(() => updateChart(stats), 100);
+                    chartEl.style.height = isExpandedUserChart.value ? '100%' : '50%';
+
+                    if (!charts.user) {
+                        charts.user = ECHARTS.init(chartEl);
+                        charts.user.on('click', (params) => {
+                            const selected = params.name;
+                            displayedDanmakus.value = manager.filtered.filter(d => d.midHash === selected);
+                            currentSubFilt.value = { user: selected };
+                        });
+                        // 点击标题切换展开状态
+                        charts.user.getZr().on('click', function (params) {
+                            if (params.offsetY >= 0 && params.offsetY <= 40) {
+                                isExpandedUserChart.value = !isExpandedUserChart.value;
+                                if (charts.user) {
+                                    charts.user.dispose();
+                                    charts.user = null;
+                                }
+                                updateChart(stats); // 重新绘制
+                            }
+                        });
+                    }
+                    const userNames = stats.map(item => item.user);
+                    const counts = stats.map(item => item.count);
+                    const maxCount = Math.max(...counts);
+
+                    const sc = isExpandedUserChart.value ? 20 : 8;
+
+                    charts.user.setOption({
+                        tooltip: {},
+                        title: { text: '用户弹幕统计' },
+                        grid: { left: 100 },
+                        xAxis: {
+                            type: 'value',
+                            min: 0,
+                            max: Math.ceil(maxCount * 1.1), // 横轴最大值略大一点
+                            scale: false
+                        },
+                        yAxis: {
+                            type: 'category',
+                            data: userNames,
+                            inverse: true
+                        },
+                        dataZoom: [
+                            {
+                                type: 'slider',
+                                yAxisIndex: 0,
+                                startValue: 0,
+                                endValue: userNames.length >= sc ? sc - 1 : userNames.length,
+                                width: 20
+                            }
+                        ],
+                        series: [{
+                            type: 'bar',
+                            data: counts,
+                            label: {
+                                show: true,
+                                position: 'right',  // 在条形右边显示
+                                formatter: '{c}',   // 显示数据本身
+                                fontSize: 12
+                            }
+                        }]
+                    });
+                    renderDensityChart(manager.filtered);
+                    renderWordCloud(manager.filtered);
+                    renderDateChart(manager.filtered);
+                    renderHourChart(manager.filtered);
+                }
+
+                async function clearSubFilter() {
+                    await updateDispDanmakus(manager.filtered, {});
+                }
+                function handleRowClick(row) {
+                    if (!charts.user) return;
+
+                    const userMid = row.midHash;
+                    const option = charts.user.getOption();
+
+                    let el = doc.getElementById('wrapper-chart');
+                    while (el && el !== doc.body) {
+                        //寻找可以滚动的父级元素
+                        const overflowY = getComputedStyle(el).overflowY;
+                        const canScroll = overflowY === 'scroll' || overflowY === 'auto';
+                        if (canScroll && el.scrollHeight > el.clientHeight) {
+                            el.scrollTo({ top: 0, behavior: 'smooth' });
+                            break;
+                        }
+                        el = el.parentElement;
+                    }
+
+                    const sc = isExpandedUserChart.value ? 20 : 8;
+                    const scup = isExpandedUserChart.value ? 9 : 3;
+                    const index = option.yAxis[0].data.indexOf(userMid);
+                    if (index >= 0) {
+                        charts.user.setOption({
+                            yAxis: {
+                                axisLabel: {
+                                    formatter: function (value) {
+                                        if (value === userMid) {
+                                            return '{a|' + value + '}';
+                                        } else {
+                                            return value;
+                                        }
+                                    },
+                                    rich: {
+                                        a: {
+                                            color: '#5470c6',
+                                            fontWeight: 'bold'
+                                        }
+                                    }
+                                }
+                            },
+                            dataZoom: [{
+                                startValue: Math.min(option.yAxis[0].data.length - sc, Math.max(0, index - scup)),
+                                endValue: Math.min(option.yAxis[0].data.length - 1, Math.max(0, index - scup) + sc - 1)
+                            }]
+                        });
+                    }
+                }
+
+                async function applyFilter() {
+                    try {
+                        const regex = new RegExp(filterText.value, 'i');
+                        manager.filter(regex);
+                        currentFilt.value = regex;
+                        await updateDispDanmakus(manager.filtered, {}, true);
+                    } catch (e) {
+                        console.warn(e);
+                        alert('无效正则表达式');
+                    }
+                }
+                async function resetFilter() {
+                    manager.reset();
+                    currentFilt.value = '';
+                    await updateDispDanmakus(manager.filtered, {}, true);
+                }
+
+                onMounted(async () => {
+                    manager = new DanmakuManager(danmakuDataParam);
+                    originDanmakuCount.value = danmakuDataParam.length; // 原始弹幕数量
+                    await updateDispDanmakus(manager.filtered, {}, true);
+                });
+                return {
+                    displayedDanmakus,
+                    filterText,
+                    applyFilter,
+                    resetFilter,
+                    danmakuCount,
+                    videoData,
+                    originDanmakuCount,
+                    currentFilt,
+                    currentSubFilt,
+                    loading,
+                    isExpandedUserChart,
+                    isNewTag,
+                    midHashOnClick,
+                    handleRowClick,
+                    clearSubFilter,
+                    formatProgress,
+                    formatCtime,
+                    formatTime,
+                    shareImage,
+                    openInNewTab
+                };
+            },
+            template: `
+<el-container style="height: 100%;" v-loading="loading">
+    <!-- 左边 -->
+    <el-aside width="50%" style="overflow-y: auto;">
+        <!-- 上半部：标题区域 -->
+        <div style="min-width: 400px;">
+            <div id="wrapper-title" style="text-align: left;">
+                <h3>{{ videoData.title || '加载中...' }}
+                    <el-popover placement="right" v-if="videoData.pic"
+                        popper-style="width: 360px; height: 180px; padding: 10px; box-sizing: content-box;">
+                        <div
+                            style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%;">
+                            <img :src="videoData.pic" alt="视频封面" style="max-width: 100%; max-height: 100%;" />
+                        </div>
+                        <template v-slot:reference>
+                            <el-link :href="videoData.pic" target="_blank" type="primary">
+                                <svg t="1746010439489" class="icon" viewBox="0 0 1029 1024" version="1.1"
+                                    xmlns="http://www.w3.org/2000/svg" p-id="5042" width="20" height="20">
+                                    <path
+                                        d="M487.966546 867.289336c-0.191055 0-0.38211 0-0.577318-0.008306-85.119089-0.926201-171.396967-8.3898-256.428835-22.178976a29.812863 29.812863 0 0 0-0.598085-0.095528c-75.890309-13.224318-150.032051-79.636645-165.274905-148.050895l-0.161981-0.751759c-33.405525-161.104925-33.405525-324.473435 0-485.570054 0.053994-0.249202 0.103834-0.498404 0.161981-0.743452C80.326104 141.467809 154.471999 75.051329 230.370615 61.835317l0.593931-0.09968a1713.961362 1713.961362 0 0 1 550.250427 0.09968c75.890309 13.207705 150.036204 79.624185 165.279059 148.055049 0.058147 0.249202 0.107988 0.494251 0.157827 0.743452 21.672265 104.444702 29.385067 210.417843 22.943196 314.962227-1.761027 28.620847-26.390489 50.355413-55.011337 48.627612-28.625001-1.765181-50.38864-26.390489-48.627612-55.011336 5.864553-95.195155-1.158789-191.769229-20.878973-287.043298-6.836441-29.630115-51.015798-62.56631-81.414286-67.99476a1610.243499 1610.243499 0 0 0-515.735953 0c-30.394335 5.432603-74.577845 38.368798-81.422593 67.990606-30.377721 146.817345-30.381874 295.690607 0 442.512105 6.853054 29.621808 51.028258 62.55385 81.422593 67.986453 79.81524 12.925276 160.756042 19.923698 240.587896 20.791752 28.670688 0.315656 51.65957 23.802942 51.352221 52.481936-0.311502 28.479633-23.49144 51.352221-51.900465 51.352221z"
+                                        p-id="5043" fill="#409eff"></path>
+                                    <path
+                                        d="M727.790223 570.539621c20.272581 20.272581 53.150628 20.276734 73.427362 0s20.276734-53.146475 0-73.423209l-102.762589-102.766742a51.917079 51.917079 0 0 0-73.427362 0l-86.036983 86.036982-66.055138-66.055137c-20.272581-20.272581-53.146475-20.272581-73.423209 0l-162.716431 162.712278c-20.272581 20.280888-20.272581 53.150628 0 73.423209a51.759251 51.759251 0 0 0 36.711604 15.209628c13.286619 0 26.573238-5.075414 36.711605-15.209628l126.004827-126.004826 66.055137 66.055137c20.276734 20.280888 53.146475 20.280888 73.419056 0l86.04529-86.036983 66.046831 66.059291zM974.911364 766.408222c-20.272581-20.272581-53.142322-20.272581-73.427363 0l-40.877431 40.881585v-133.318905c0-28.670688-23.246391-51.917079-51.917079-51.917079s-51.917079 23.246391-51.917078 51.917079v133.318905l-40.877432-40.881585c-20.285041-20.272581-53.154782-20.272581-73.427362 0-20.272581 20.280888-20.272581 53.150628 0 73.427363l129.510268 129.501961c10.138367 10.134214 23.424986 15.205474 36.711604 15.205474s26.569084-5.07126 36.711605-15.205474l129.510268-129.501961c20.268428-20.276734 20.268428-53.146475 0-73.427363z"
+                                        p-id="5044" fill="#409eff"></path>
+                                </svg>
+                            </el-link>
+                        </template>
+                    </el-popover>
+                </h3>
+                <el-tag type="success" v-if="videoData.page_cur">
+                    第 {{ videoData.page_index + 1 }} P：{{ videoData.page_cur.part }}
+                </el-tag>
+
+                <p style="margin: 10px;">
+                    BVID：
+                    <el-link v-if="videoData.bvid" :href="'https://www.bilibili.com/video/' + videoData.bvid"
+                        target="_blank" type="primary" style="vertical-align: baseline;">
+                        {{ videoData.bvid }}
+                    </el-link><br />
+                    UP主：
+                    <el-link v-if="videoData.owner" :href="'https://space.bilibili.com/' + videoData.owner.mid"
+                        target="_blank" type="primary" style="vertical-align: baseline;">
+                        {{ videoData.owner.name }}
+                    </el-link>
+                    <el-popover placement="right" v-if="videoData.owner"
+                        popper-style="width: 100px; height: 100px; padding: 10px; box-sizing: content-box;">
+                        <div
+                            style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%;">
+                            <img :src="videoData.owner.face" alt="UP主头像"
+                                style="max-width: 100%; max-height: 100%; border-radius: 50%;" />
+                        </div>
+                        <template v-slot:reference>
+                            <el-link :href="videoData.owner.face" target="_blank" type="primary"
+                                style="margin-left: 8px; vertical-align: -2px;">
+                                <svg t="1746010657723" class="icon" viewBox="0 0 1024 1024" version="1.1"
+                                    xmlns="http://www.w3.org/2000/svg" p-id="10144" width="16" height="16">
+                                    <path
+                                        d="M1024 512c0-281.6-230.4-512-512-512S0 230.4 0 512s230.4 512 512 512 512-230.4 512-512z m-512 448c-249.6 0-448-198.4-448-448s198.4-448 448-448 448 198.4 448 448-198.4 448-448 448z"
+                                        fill="#409eff" p-id="10145"></path>
+                                    <path
+                                        d="M627.2 505.6c44.8-38.4 76.8-89.6 76.8-153.6 0-108.8-83.2-192-192-192s-192 83.2-192 192c0 64 32 115.2 76.8 153.6-102.4 44.8-172.8 147.2-172.8 262.4 0 19.2 12.8 32 32 32s32-12.8 32-32c0-121.6 102.4-224 224-224s224 102.4 224 224c0 19.2 12.8 32 32 32s32-12.8 32-32c0-115.2-70.4-217.6-172.8-262.4zM512 480c-70.4 0-128-57.6-128-128s57.6-128 128-128 128 57.6 128 128-57.6 128-128 128z"
+                                        fill="#409eff" p-id="10146"></path>
+                                </svg>
+                            </el-link>
+                        </template>
+                    </el-popover><br />
+                    发布时间：
+                    <el-tag type="info" size="small" style="vertical-align: baseline;">
+                        {{ videoData.pubdate ? formatTime(videoData.pubdate) : '-' }}
+                    </el-tag><br />
+                    截止 <el-tag type="info" size="small" style="vertical-align: baseline;"> {{
+                        formatTime(Math.floor(Date.now()/1000)) }} </el-tag>
+                    播放量:
+                    <el-tag type="primary" size="small" style="vertical-align: baseline;" v-if="videoData.stat">
+                        {{ videoData.stat.view || '-' }}
+                    </el-tag><br />
+                    总弹幕数:
+                    <el-tag type="primary" size="small" style="vertical-align: baseline;" v-if="videoData.stat">
+                        {{ videoData.stat.danmaku || '-' }}
+                    </el-tag>
+                    ，载入实时弹幕
+                    <el-link v-if="videoData.owner"
+                        :href="'https://api.bilibili.com/x/v1/dm/list.so?oid=' + videoData.cid" target="_blank"
+                        type="primary" style="vertical-align: baseline;" title="下载弹幕">
+                        {{ originDanmakuCount }}
+                    </el-link>
+                    条
+                </p>
+                <p style="
+                    background-color: #f4faff;
+                    border-left: 4px solid #409eff;
+                    padding: 10px 15px;
+                    border-radius: 4px;
+                    color: #333;
+                ">
+                    <template v-if="currentFilt">
+                        筛选：<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentFilt
+                            }}</el-tag><br />
+                    </template>
+                    共有 {{ danmakuCount.user }} 位不同用户发送了 {{ danmakuCount.dm }} 条弹幕<br />
+                    <template v-if="Object.keys(currentSubFilt).length">
+                        <template v-if="currentSubFilt.user">
+                            用户<el-link type="primary" @click="midHashOnClick" style="vertical-align: baseline;">{{
+                                currentSubFilt.user }}</el-link>发送
+                        </template>
+                        <template v-else-if="currentSubFilt.wordcloud">
+                            含词语<el-tag type="info" size="small" style="vertical-align: baseline;">{{
+                                currentSubFilt.wordcloud }}</el-tag>
+                        </template>
+                        <template v-else-if="currentSubFilt.date">
+                            日期<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentSubFilt.date
+                                }}</el-tag>
+                        </template>
+                        <template v-else-if="currentSubFilt.hour">
+                            每天<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentSubFilt.hour
+                                }}</el-tag>点
+                        </template>
+                        弹幕共 {{ displayedDanmakus.length }} 条
+                        <el-tag type="info" size="small" effect="light" round @click="clearSubFilter" style="
+                            width: 18px;
+                            height: 18px;
+                            padding: 0;
+                            vertical-align: baseline;
+                            cursor: pointer;
+                        " title="清除子筛选">
+                            ×
+                        </el-tag>
+
+                    </template>
+                </p>
+            </div>
+
+            <!-- 下半部：弹幕表格 -->
+            <div id="wrapper-table" style="height: 100%; display: flex; flex-direction: column;">
+                <el-table :data="displayedDanmakus" style="flex: 1;" height="0" border @row-click="handleRowClick">
+                    <el-table-column prop="progress" label="时间" width="80">
+                        <template #default="{ row }">{{ formatProgress(row.progress) }}</template>
+                    </el-table-column>
+                    <el-table-column prop="content" label="弹幕内容">
+                        <template #default="{ row }">
+                            <el-tooltip class="item" placement="top-start"
+                                :content="'发送用户: ' + row.midHash + '\\n屏蔽等级: ' + row.weight">
+                                <span>{{ row.content }}</span>
+                            </el-tooltip>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="ctime" label="发送时间" width="160">
+                        <template #default="{ row }">{{ formatCtime(row.ctime) }}</template>
+                    </el-table-column>
+                </el-table>
+            </div>
+        </div>
+    </el-aside>
+
+    <!-- 右边 -->
+    <el-container>
+        <el-header style="height: auto;">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 5px;">
+                <el-input v-model="filterText" placeholder="请输入正则表达式"
+                    style="flex: 1 1 200px; min-width: 150px;"></el-input>
+                <span></span>
+                <template v-if="displayedDanmakus.length == originDanmakuCount">
+                    <el-button @click="applyFilter" type="warning">筛选</el-button>
+                    <span></span>
+                    <el-button @click="resetFilter">取消筛选</el-button>
+                </template>
+                <template v-else>
+                    <el-button @click="applyFilter">筛选</el-button>
+                    <span></span>
+                    <el-button @click="resetFilter" type="warning">取消筛选</el-button>
+                </template>
+                <span></span>
+                <el-button @click="shareImage" title="分享统计结果" circle>
+                    <svg t="1746120386170" class="icon" viewBox="0 0 1024 1024" version="1.1"
+                        xmlns="http://www.w3.org/2000/svg" p-id="8980" width="20" height="20">
+                        <path
+                            d="M304.106667 604.064a42.666667 42.666667 0 1 1 53.653333-66.357333l111.754667 90.464c14.506667 12.970667 18.954667 28.768 13.376 47.402666-7.392 17.994667-20.8 27.466667-40.224 28.426667h-266.666667a42.666667 42.666667 0 0 1 0-85.333333h146.144l-18.026667-14.602667zM314.56 841.269333a42.666667 42.666667 0 1 1-53.653333 66.357334l-111.754667-90.464c-14.506667-12.970667-18.954667-28.768-13.376-47.402667 7.392-17.994667 20.8-27.466667 40.224-28.426667h266.666667a42.666667 42.666667 0 0 1 0 85.333334H296.522667l18.026666 14.602666z"
+                            p-id="8981" fill="#409eff"></path>
+                        <path
+                            d="M180.053333 134.72a84.8 84.8 0 0 0-26.986666 18.346667 84.8 84.8 0 0 0-18.346667 26.986666A84.298667 84.298667 0 0 0 128 213.333333v298.666667a42.304 42.304 0 0 0 0.853333 8.32c0.277333 1.365333 0.554667 2.72 0.96 4.053333a42.72 42.72 0 0 0 3.2 7.786667 41.024 41.024 0 0 0 4.693334 6.933333c0.885333 1.077333 1.781333 2.101333 2.773333 3.093334 0.992 0.992 2.016 1.888 3.093333 2.773333a43.925333 43.925333 0 0 0 6.933334 4.693333 42.72 42.72 0 0 0 7.786666 3.2c1.344 0.405333 2.688 0.682667 4.053334 0.96A43.466667 43.466667 0 0 0 170.666667 554.666667a42.304 42.304 0 0 0 8.32-0.853334c1.365333-0.277333 2.72-0.554667 4.053333-0.96a42.72 42.72 0 0 0 7.786667-3.2 41.024 41.024 0 0 0 6.933333-4.693333c1.077333-0.885333 2.101333-1.781333 3.093333-2.773333 0.992-0.992 1.888-2.016 2.773334-3.093334a43.925333 43.925333 0 0 0 4.693333-6.933333 42.72 42.72 0 0 0 3.2-7.786667c0.405333-1.344 0.682667-2.688 0.96-4.053333A43.466667 43.466667 0 0 0 213.333333 512V213.333333h597.333334v597.333334H586.666667a42.293333 42.293333 0 0 0-8.32 0.853333 42.272 42.272 0 0 0-4.053334 0.96 42.613333 42.613333 0 0 0-7.786666 3.2 41.173333 41.173333 0 0 0-6.933334 4.693333 42.122667 42.122667 0 0 0-3.093333 2.773334 41.653333 41.653333 0 0 0-2.773333 3.093333 43.456 43.456 0 0 0-4.693334 6.933333 43.157333 43.157333 0 0 0-3.2 7.786667 42.432 42.432 0 0 0-0.96 4.053333 42.314667 42.314667 0 0 0-0.64 12.48c0.138667 1.386667 0.373333 2.784 0.64 4.16 0.277333 1.376 0.554667 2.709333 0.96 4.053334a42.517333 42.517333 0 0 0 3.2 7.786666 41.045333 41.045333 0 0 0 4.693334 6.933334c0.885333 1.077333 1.781333 2.101333 2.773333 3.093333 0.992 0.992 2.016 1.888 3.093333 2.773333a44.682667 44.682667 0 0 0 6.933334 4.693334 42.613333 42.613333 0 0 0 7.786666 3.2c1.344 0.405333 2.688 0.682667 4.053334 0.96A43.136 43.136 0 0 0 586.666667 896h224a84.288 84.288 0 0 0 33.28-6.72 84.778667 84.778667 0 0 0 26.986666-18.346667 84.778667 84.778667 0 0 0 18.346667-26.986666c4.512-10.613333 6.72-21.728 6.72-33.28V213.333333a84.298667 84.298667 0 0 0-6.72-33.28 84.778667 84.778667 0 0 0-18.346667-26.986666 84.8 84.8 0 0 0-26.986666-18.346667A84.288 84.288 0 0 0 810.666667 128H213.333333a84.298667 84.298667 0 0 0-33.28 6.72z"
+                            p-id="8982" fill="#409eff"></path>
+                        <path
+                            d="M730.666667 330.666667a48 48 0 1 0 0-96 48 48 0 0 0 0 96zM694.08 350.933333c-0.874667-1.045333-1.813333-1.92-2.773333-2.88-0.96-0.96-1.941333-1.92-2.986667-2.773333-1.045333-0.853333-2.08-1.706667-3.2-2.453333-1.12-0.746667-2.346667-1.397333-3.52-2.026667a40.490667 40.490667 0 0 0-3.626667-1.706667 38.805333 38.805333 0 0 0-3.733333-1.28 38.997333 38.997333 0 0 0-3.84-0.96 39.093333 39.093333 0 0 0-3.946667-0.533333c-1.322667-0.106667-2.624-0.106667-3.946666-0.106667s-2.634667 0.053333-3.946667 0.213334a41.6 41.6 0 0 0-11.413333 3.093333 41.205333 41.205333 0 0 0-3.626667 1.813333c-1.162667 0.672-2.208 1.461333-3.306667 2.24a45.013333 45.013333 0 0 0-3.306666 2.56l-58.453334 50.773334-81.813333-103.786667a45.205333 45.205333 0 0 0-2.773333-3.2 40.917333 40.917333 0 0 0-2.986667-2.773333 42.698667 42.698667 0 0 0-3.306667-2.56c-1.130667-0.789333-2.218667-1.568-3.413333-2.24-1.194667-0.672-2.378667-1.173333-3.626667-1.706667a42.250667 42.250667 0 0 0-7.893333-2.56 37.226667 37.226667 0 0 0-3.946667-0.533333 44.448 44.448 0 0 0-4.16-0.213334 39.445333 39.445333 0 0 0-8 0.853334c-1.322667 0.298667-2.656 0.746667-3.946666 1.173333a42.218667 42.218667 0 0 0-7.466667 3.413333 40.906667 40.906667 0 0 0-6.613333 4.8L143.146667 483.626667c-1.045333 0.928-2.026667 1.941333-2.986667 2.986666-0.96 1.045333-1.92 2.069333-2.773333 3.2a47.189333 47.189333 0 0 0-4.48 7.36c-0.64 1.28-1.301333 2.592-1.813334 3.946667-0.512 1.344-0.885333 2.773333-1.28 4.16-0.394667 1.386667-0.8 2.730667-1.066666 4.16-0.266667 1.429333-0.394667 2.922667-0.533334 4.373333a45.322667 45.322667 0 0 0 0 8.64c0.128 1.450667 0.277333 2.837333 0.533334 4.266667 0.256 1.429333 0.682667 2.88 1.066666 4.266667 0.384 1.386667 0.768 2.816 1.28 4.16 0.512 1.354667 1.066667 2.656 1.706667 3.946666s1.386667 2.517333 2.133333 3.733334c0.746667 1.226667 1.493333 2.485333 2.346667 3.626666 1.717333 2.282667 3.552 4.309333 5.653333 6.186667 2.101333 1.888 4.416 3.498667 6.826667 4.906667 2.421333 1.418667 4.949333 2.645333 7.573333 3.52 2.634667 0.874667 5.365333 1.514667 8.106667 1.813333 2.741333 0.298667 5.472 0.288 8.213333 0a39.36 39.36 0 0 0 8.106667-1.813333c2.634667-0.853333 5.152-2.016 7.573333-3.413334a40 40 0 0 0 6.72-4.8L459.733333 384.96l81.6 103.36c0.853333 1.088 1.706667 2.197333 2.666667 3.2s1.941333 1.877333 2.986667 2.773333a43.381333 43.381333 0 0 0 10.453333 6.613334c1.248 0.544 2.453333 0.970667 3.733333 1.386666 1.28 0.416 2.624 0.682667 3.946667 0.96 1.322667 0.277333 2.602667 0.608 3.946667 0.746667a39.925333 39.925333 0 0 0 8.106666 0c1.344-0.149333 2.624-0.469333 3.946667-0.746667 1.322667-0.277333 2.666667-0.533333 3.946667-0.96 1.28-0.426667 2.485333-0.938667 3.733333-1.493333h0.106667c1.237333-0.554667 2.442667-1.248 3.626666-1.92a39.466667 39.466667 0 0 0 3.413334-2.133333 41.813333 41.813333 0 0 0 3.2-2.56l59.413333-51.626667L802.133333 614.613333c0.906667 1.088 1.877333 1.994667 2.88 2.986667 1.002667 0.992 2.005333 2.005333 3.093334 2.88 1.088 0.885333 2.24 1.696 3.413333 2.453333h0.106667c1.173333 0.757333 2.282667 1.493333 3.52 2.133334 1.237333 0.64 2.56 1.205333 3.84 1.706666 1.290667 0.501333 2.506667 0.810667 3.84 1.173334s2.805333 0.746667 4.16 0.96c1.354667 0.213333 2.570667 0.426667 3.946666 0.426666h4.16c1.376 0 2.794667-0.213333 4.16-0.426666 1.354667-0.213333 2.613333-0.597333 3.946667-0.96h0.106667c1.333333-0.362667 2.666667-0.672 3.946666-1.173334 1.290667-0.501333 2.602667-1.066667 3.84-1.706666 1.237333-0.64 2.346667-1.365333 3.52-2.133334 1.173333-0.757333 2.325333-1.568 3.413334-2.453333a44.586667 44.586667 0 0 0 3.2-2.88c1.002667-0.992 1.973333-2.005333 2.88-3.093333a44.053333 44.053333 0 0 0 4.8-7.146667c0.693333-1.258667 1.237333-2.517333 1.813333-3.84a47.786667 47.786667 0 0 0 1.6-4.053333c0.448-1.376 0.853333-2.752 1.173333-4.16s0.554667-2.826667 0.746667-4.266667c0.192-1.44 0.426667-2.922667 0.426667-4.373333v-4.266667c0-1.450667-0.234667-2.933333-0.426667-4.373333a47.434667 47.434667 0 0 0-0.746667-4.266667c-0.32-1.418667-0.832-2.784-1.28-4.16a46.346667 46.346667 0 0 0-1.493333-4.053333c-0.576-1.322667-1.12-2.581333-1.813333-3.84a48.768 48.768 0 0 0-2.346667-3.733334 43.850667 43.850667 0 0 0-2.56-3.413333L694.08 350.933333z"
+                            p-id="8983" fill="#409eff"></path>
+                    </svg>
+                </el-button>
+                <span></span>
+                <el-button @click="openInNewTab" title="下载统计面板" circle v-if="isNewTag">
+                    <svg t="1746264728781" class="icon" viewBox="0 0 1024 1024" version="1.1"
+                        xmlns="http://www.w3.org/2000/svg" p-id="2669" width="16" height="16">
+                        <path
+                            d="M896 361.408V60.224H64v843.328h384V960H64c-35.328 0-64-23.232-64-56.448V60.16C0 26.944 28.672 0 64 0h832c35.328 0 64 26.944 64 60.224v301.184c0 33.28-28.672 60.224-64 60.224v-60.16z m-125.696 213.12L832 576l-0.064 306.752 99.968-99.84 45.248 45.184L845.248 960l3.84 3.84-45.184 45.312-3.904-3.904-3.84 3.84-45.312-45.184 3.904-3.904-131.84-131.84 45.184-45.312 100.352 100.352 1.856-308.608z"
+                            fill="#409eff" p-id="2670"></path>
+                        <path d="M64 256h896v64H64z" fill="#409eff" p-id="2671"></path>
+                    </svg>
+                </el-button>
+                <el-button @click="openInNewTab" title="新标签页打开统计面板" circle v-else>
+                    <svg t="1746238142181" class="icon" viewBox="0 0 1024 1024" version="1.1"
+                        xmlns="http://www.w3.org/2000/svg" p-id="3091" width="16" height="16">
+                        <path
+                            d="M409.6 921.728H116.928a58.56 58.56 0 0 1-58.56-58.496V263.296H936.32v58.56a29.248 29.248 0 1 0 58.496 0V87.744C994.752 39.296 955.392 0 906.944 0H87.68C39.296 0 0 39.296 0 87.744v804.736a87.68 87.68 0 0 0 87.744 87.68H409.6a29.248 29.248 0 0 0 0-58.432zM58.432 116.992c0-32.32 26.24-58.496 58.56-58.496h760.64c32.32 0 58.56 26.24 58.56 58.496V204.8H58.496V116.992z m936.256 321.792h-351.104a29.312 29.312 0 0 0 0 58.56h277.312c-2.176 1.28-4.48 2.304-6.4 4.096L484.736 967.68a29.184 29.184 0 0 0 0 41.344c11.52 11.456 29.888 11.52 41.344 0l430.08-466.112a87.04 87.04 0 0 0 9.408-10.624V819.2a29.248 29.248 0 0 0 58.496 0V468.16a29.376 29.376 0 0 0-29.248-29.376z"
+                            fill="#409eff" p-id="3092"></path>
+                    </svg>
+                </el-button>
+            </div>
+        </el-header>
+        <el-main style="overflow-y: auto;">
+            <div id="wrapper-chart" style="min-width: 400px;">
+                <div id="chart-user" style="height: 50%; margin-bottom: 10px;"></div>
+                <div id="chart-wordcloud" style="height: 50%; margin-bottom: 10px;"></div>
+                <div id="chart-density" style="height: 50%; margin-bottom: 10px;"></div>
+                <div id="chart-date" style="height: 50%; margin-bottom: 10px;"></div>
+                <div id="chart-hour" style="height: 50%;"></div>
+            </div>
+        </el-main>
+    </el-container>
+</el-container>
+`
+        });
+        app.use(ELEMENT_PLUS);
+        app.mount(containerSelector);
+    }
+            async function initIframeApp(iframe, videoData, danmakuData) {
+        const doc = iframe.contentDocument;
+        const win = iframe.contentWindow;
+
+        // 引入外部库
+        const addScript = (src) => new Promise(resolve => {
+            const script = doc.createElement('script');
+            script.src = src;
+            script.onload = resolve;
+            doc.head.appendChild(script);
+        });
+        const addCss = (href) => {
+            const link = doc.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = href;
+            doc.head.appendChild(link);
+        };
+        addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css');
+        await addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js');
+        await addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
+        await addScript('https://cdn.jsdelivr.net/npm/echarts@5');
+        await addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js');
+        await addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
+        await addScript('https://cdn.jsdelivr.net/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js');
+
+        // 创建挂载点
+        const appRoot = doc.createElement('div');
+        appRoot.id = 'danmaku-app';
+        doc.body.style.margin = '0';
+        doc.body.appendChild(appRoot);
+
+        renderDanmakuApp('#danmaku-app', win, doc, videoData, danmakuData);
+    }
+            const videoData = {"bvid":"BV1e4GqzCE4o","aid":114432172753076,"videos":1,"tid":124,"tid_v2":2003,"tname":"社科·法律·心理","tname_v2":"影视资讯","copyright":1,"pic":"http://i0.hdslb.com/bfs/archive/3ec7ba302cf12cb47715f93ea67ca2a451d3fc4c.jpg","title":"【参考信息第448期】电鸡替代BRT ；发钱奖励结婚","pubdate":1746096832,"ctime":1746096832,"desc":"继续分享马督工睡前消息编辑部关注的新闻","desc_v2":[{"raw_text":"继续分享马督工睡前消息编辑部关注的新闻","type":1,"biz_id":0}],"state":0,"duration":1153,"mission_id":4033924,"rights":{"bp":0,"elec":0,"download":1,"movie":0,"pay":0,"hd5":0,"no_reprint":1,"autoplay":1,"ugc_pay":0,"is_cooperation":0,"ugc_pay_preview":0,"no_background":0,"clean_mode":0,"is_stein_gate":0,"is_360":0,"no_share":0,"arc_pay":0,"free_watch":0},"owner":{"mid":1556651916,"name":"小黛晨读","face":"https://i0.hdslb.com/bfs/face/01fc599bc87d7dc20ac09bb941dfd100a63bc28b.jpg"},"stat":{"aid":114432172753076,"view":164309,"danmaku":583,"reply":550,"favorite":1395,"coin":1612,"share":172,"now_rank":0,"his_rank":0,"like":8223,"dislike":0,"evaluation":"","vt":0},"argue_info":{"argue_msg":"","argue_type":0,"argue_link":""},"dynamic":"五一档12部电影上映，你打算去看哪部？坐等五一机票价格跳水的打工人绝望了，以前热门航线临出发前几天可能出现两三折的票，现在越来越少。米哈游总裁获评全国劳动模范；PTSD被列为职业病；卫健委调查中日友好医院肖飞董袭莹舆情。西班牙葡萄牙大停电原因待查，依赖可再生能源发电会导致电网脆弱吗？中国再核准10台核电机组。广州电动自行车替代了部分BRT线路；一季度结婚登记继续下跌，多地发钱鼓励结婚。","cid":29735586267,"dimension":{"width":1920,"height":1080,"rotate":0},"premiere":null,"teenage_mode":0,"is_chargeable_season":false,"is_story":false,"is_upower_exclusive":false,"is_upower_play":false,"is_upower_preview":false,"enable_vt":0,"vt_display":"","is_upower_exclusive_with_qa":false,"no_cache":false,"pages":[{"cid":29735586267,"page":1,"from":"vupload","part":"【参考信息第448期】电鸡替代BRT ；发钱奖励结婚","duration":1153,"vid":"","weblink":"","dimension":{"width":1920,"height":1080,"rotate":0},"first_frame":"http://i2.hdslb.com/bfs/storyff/n250501sa3ldkx4u3q0x2b1swfu51e64_firsti.jpg","ctime":1746096832}],"subtitle":{"allow_submit":false,"list":[]},"is_season_display":false,"user_garb":{"url_image_ani_cut":""},"honor_reply":{},"like_icon":"","need_jump_bv":false,"disable_show_up_info":false,"is_story_play":1,"is_view_self":false};
+            const danmukuData = [{"progress":132757,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098041,"midHash":"32986012","id":"1837162543307621888","weight":10,"content":"应该是更贴合消费者承担极限"},{"progress":1116902,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100227,"midHash":"d467159d","id":"1837180883850418432","weight":10,"content":"当一个领域，宽进严出，那就要考量考量了"},{"progress":182288,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102274,"midHash":"24aa20ea","id":"1837198049895214592","weight":10,"content":"蚌埠住了"},{"progress":306000,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100911,"midHash":"9369e7be","id":"1837186617706978304","weight":10,"content":"把双休落实，打工人的心理健康会大大的好"},{"progress":989015,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097112,"midHash":"624b74df","id":"1837154748311748864","weight":10,"content":"这是好事啊"},{"progress":938867,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098203,"midHash":"68548b4f","id":"1837163902488735232","weight":10,"content":"据我观察至少深圳的非机动车道很少"},{"progress":168084,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099204,"midHash":"59ce6a6e","id":"1837172295811175168","weight":10,"content":"亏欠就关门吧 哪有心疼资本家亏钱的道理"},{"progress":1052635,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104444,"midHash":"2bc6e21","id":"1837216257468916224","weight":10,"content":"鼓励女方创业，没毛病"},{"progress":944110,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099493,"midHash":"4c4a3a62","id":"1837174724640814080","weight":10,"content":"深圳基本没有非机动车道 自行车行人电动车全部挤在一起"},{"progress":1112211,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098380,"midHash":"716a9f53","id":"1837165387969193472","weight":10,"content":"哇哦好多哦"},{"progress":275125,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099968,"midHash":"bd241eb8","id":"1837178707677074176","weight":10,"content":"别，先把双休落实吧"},{"progress":1123522,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101716,"midHash":"63c680af","id":"1837193368338320384","weight":10,"content":"各位不光要考虑结婚奖金，还要考虑结婚后3年的问题"},{"progress":66431,"mode":1,"fontsize":25,"color":16777215,"ctime":1746166250,"midHash":"bdec260","id":"1837734717131807232","weight":10,"content":"孤独摇滚这个是总集篇，内容和tv动画基本一样的，总集篇票房低是常态，票房高反而是特殊，小戴这讲的没什么问题"},{"progress":932350,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107053,"midHash":"78c11b25","id":"1837238143825326592","weight":10,"content":"双向八车道恨不得把八个车道都占用给机动车了，非机动车在这种条件下还有这么高的效率很不错了"},{"progress":156518,"mode":5,"fontsize":25,"color":15138834,"ctime":1746100969,"midHash":"cee81d54","id":"1837187101544744448","weight":10,"content":"幸福航空这个和五一没关系…是公司整体停摆了"},{"progress":353669,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098856,"midHash":"83b5d0c6","id":"1837169376668008704","weight":10,"content":"老马到底是老马，看的长远啊"},{"progress":121741,"mode":1,"fontsize":25,"color":16777215,"ctime":1746157184,"midHash":"c9d9c46a","id":"1837658672655350784","weight":10,"content":"打车软件会针对手机快没电的人提高价格"},{"progress":337251,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097257,"midHash":"3580a724","id":"1837155962839150336","weight":10,"content":"哈哈哈哈哈哈"},{"progress":258271.00000000003,"mode":1,"fontsize":25,"color":16777215,"ctime":1746112148,"midHash":"2a7f4674","id":"1837280879404414976","weight":10,"content":"要不这样吧，未经管理者审批的加班都属于公司违法行为，这样可以了吧？？"},{"progress":1025154,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101857,"midHash":"79fb9a6a","id":"1837194556802610176","weight":10,"content":"主要是穷，到底是选养活自己吃好喝好再存点小钱，还是选择月光，看个人选择咯"},{"progress":179491,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098737,"midHash":"83b5d0c6","id":"1837168383507037440","weight":10,"content":"总什么？"},{"progress":67818,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097523,"midHash":"47f79982","id":"1837158195878657280","weight":10,"content":"孤独摇滚番剧好看的"},{"progress":818862,"mode":5,"fontsize":25,"color":16777215,"ctime":1746112926,"midHash":"7d15916d","id":"1837287405121123328","weight":10,"content":"“运行速度更快”指平均时速不超过40km"},{"progress":1092950,"mode":1,"fontsize":25,"color":16777215,"ctime":1746124042,"midHash":"b2bbbb18","id":"1837380654992667904","weight":10,"content":"这么多我都不知道怎么花了"},{"progress":1029617,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098051,"midHash":"79166c4b","id":"1837162625264560640","weight":10,"content":"15岁？能结婚领证吗？也算进去？"},{"progress":922997,"mode":1,"fontsize":25,"color":16777215,"ctime":1746157388,"midHash":"dfbd249b","id":"1837660382094187520","weight":10,"content":"小城市都是共享电动车了，根本就没有共享单车"},{"progress":1038470,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101146,"midHash":"49266f84","id":"1837188591160859648","weight":10,"content":"结婚不等于生育"},{"progress":58088,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098967,"midHash":"e79bc3cd","id":"1837170308491697664","weight":10,"content":"啊？"},{"progress":80118,"mode":1,"fontsize":25,"color":16777215,"ctime":1746168879,"midHash":"2f006e47","id":"1837756777769753344","weight":10,"content":"大伙儿不能因为自己所在的平台是b站就觉得孤独摇滚能在全国电影市场理所当然的大卖啊"},{"progress":1106894,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097203,"midHash":"624b74df","id":"1837155516489937664","weight":10,"content":"是1000元哦~~"},{"progress":61824,"mode":1,"fontsize":25,"color":16777215,"ctime":1746158537,"midHash":"dce125b9","id":"1837670023414970112","weight":10,"content":"哈哈哈哈，小黛你是不是对孤独摇滚有什么误会？"},{"progress":773655,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102023,"midHash":"ebd03ace","id":"1837195949949176576","weight":10,"content":"目前火力发电发电量为6成"},{"progress":1033527,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100698,"midHash":"a978348b","id":"1837184829792278784","weight":10,"content":"80后都还有很多还没结婚的"},{"progress":245713,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097912,"midHash":"4661eebb","id":"1837161456806952192","weight":10,"content":"哈哈哈哈哈哈哈"},{"progress":1028085,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104819,"midHash":"a7988150","id":"1837219403062865920","weight":10,"content":"确实，你们该感谢女权（褒义），我觉得还有下降空间"},{"progress":1070093,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101710,"midHash":"a3601b8b","id":"1837193321529924352","weight":10,"content":"翻译一下，补贴结婚等于单身收税"},{"progress":195855,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098315,"midHash":"62ec24e4","id":"1837164839764768512","weight":10,"content":"笑死我了"},{"progress":341709,"mode":1,"fontsize":25,"color":16777215,"ctime":1746109783,"midHash":"715d9e59","id":"1837261038912176384","weight":10,"content":"能把双休制和八小时工作制落实到位再说吧"},{"progress":965931,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107691,"midHash":"a4c53e85","id":"1837243490338309888","weight":10,"content":"这和房东收我7块钱一方有什么影响吗？"},{"progress":876902,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107608,"midHash":"3a4febbf","id":"1837242792750240256","weight":10,"content":"市容市貌应该反应在市民脸上！市民能各得所需才是好城市！"},{"progress":528472,"mode":1,"fontsize":25,"color":16777215,"ctime":1746172421,"midHash":"9bf2313a","id":"1837786485706371584","weight":10,"content":"不冲突，除了下大雨就是大晴天，没多少阴天就是了"},{"progress":892351,"mode":1,"fontsize":25,"color":16777215,"ctime":1746126603,"midHash":"b57da2de","id":"1837402136355401216","weight":10,"content":"这种南方城市电动车本身就很适合。"},{"progress":834302,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100457,"midHash":"dfc84fef","id":"1837182810025750016","weight":10,"content":"brt有点臭，风大灰尘大，而且且大型的BLT附近往往也有地铁站"},{"progress":187040,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098548,"midHash":"92f1b2a7","id":"1837166796131266048","weight":10,"content":"红红火火恍恍惚惚"},{"progress":889215,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113045,"midHash":"9f6d7d5","id":"1837288404388939520","weight":10,"content":"因为很多人坐地铁也要电鸡接驳哈哈"},{"progress":720991,"mode":1,"fontsize":25,"color":16777215,"ctime":1746110146,"midHash":"aac3fe7","id":"1837264089119350784","weight":10,"content":"碳排放？知不知道核电是真正的高效清洁能源"},{"progress":844203,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106750,"midHash":"a4c53e85","id":"1837235597807636736","weight":10,"content":"这个地铁图很老了，现在是新修的13号线2期和brt有很多站重叠，修好通车后还会再分流一部分客流量"},{"progress":87371,"mode":1,"fontsize":25,"color":16777215,"ctime":1746103380,"midHash":"8a047937","id":"1837207328634739968","weight":10,"content":"直接放一年"},{"progress":246461,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101950,"midHash":"9998fc19","id":"1837195332380422912","weight":10,"content":"牛逼，真牛逼，佩服佩服"},{"progress":1001570,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098669,"midHash":"98c17433","id":"1837167806706459136","weight":10,"content":"好事啊"},{"progress":126146,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098557,"midHash":"229d4274","id":"1837166867350034688","weight":10,"content":"防穷鬼模式"},{"progress":64080,"mode":1,"fontsize":25,"color":16777215,"ctime":1746176664,"midHash":"c46d10c0","id":"1837822079660359168","weight":10,"content":"马逆团队还是浓度低了，孤独摇滚的受众还是不少的，质量口碑也在线"},{"progress":615856,"mode":1,"fontsize":25,"color":16777215,"ctime":1746147927,"midHash":"61b1fb1e","id":"1837581019629435904","weight":10,"content":"系统内巨量的同步机提供的惯量是电网稳定的基石，新能源缺乏这一基石"},{"progress":1028523.9999999999,"mode":1,"fontsize":25,"color":16777215,"ctime":1746145567,"midHash":"c5b9285","id":"1837561218496441856","weight":10,"content":"15岁作为单身计算门槛是不是太低了，看20以上更能说明问题吧"},{"progress":79575,"mode":1,"fontsize":25,"color":16777215,"ctime":1746108072,"midHash":"85b9b1ea","id":"1837246685005896192","weight":10,"content":"有啥离谱的，电影只要还赚钱延期就正常，大把延期很久的电影"},{"progress":540430,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101329,"midHash":"df0b04fa","id":"1837190121612098048","weight":10,"content":"当发电量大于用电负荷，系统中总的有功功率过剩，发电机原动机械功率大于发出电磁功率，发电机转速上升，电网频率会升高；"},{"progress":1024502,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097822,"midHash":"aa55ac70","id":"1837160705825691648","weight":10,"content":"90后初婚还留着的有多少"},{"progress":1080783,"mode":1,"fontsize":25,"color":16777215,"ctime":1746194483,"midHash":"79704524","id":"1837971560276361216","weight":10,"content":"结婚也好意思发消费券"},{"progress":72531,"mode":1,"fontsize":25,"color":16777215,"ctime":1746160376,"midHash":"6862a7fd","id":"1837685445644008704","weight":10,"content":"孤独摇滚很好看啊"},{"progress":889174,"mode":1,"fontsize":25,"color":16777215,"ctime":1746159696,"midHash":"945c4316","id":"1837679742296857344","weight":9,"content":"电机除了不挡风雨、对别人不友好和不够安全之外，已经非常好了。对于中短通勤来说必选"},{"progress":641372,"mode":1,"fontsize":25,"color":16777215,"ctime":1746157724,"midHash":"c9d9c46a","id":"1837663202084270592","weight":9,"content":"生意啊"},{"progress":242560,"mode":1,"fontsize":25,"color":16777215,"ctime":1746155816,"midHash":"b812f931","id":"1837647193197623552","weight":9,"content":"自愿的"},{"progress":995320,"mode":1,"fontsize":25,"color":16777215,"ctime":1746116530,"midHash":"ba9ecbf7","id":"1837317642755643392","weight":9,"content":"调水价比结婚离婚数量重要"},{"progress":906231,"mode":1,"fontsize":25,"color":16777215,"ctime":1746111697,"midHash":"b8b9dd01","id":"1837277100638275072","weight":9,"content":"真正的新能源车"},{"progress":1106336,"mode":1,"fontsize":25,"color":16777215,"ctime":1746108901,"midHash":"2df23fcf","id":"1837253639740763648","weight":9,"content":"单身税呀"},{"progress":67041,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107352,"midHash":"abc06d6c","id":"1837240648790037248","weight":9,"content":"呃呃呃呃"},{"progress":1119518,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106844,"midHash":"6ed6ea06","id":"1837236387250804736","weight":9,"content":"建议考公考婚姻登记处的公务员，真tm清闲啊"},{"progress":968934,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099953,"midHash":"1dd4330b","id":"1837178579080205056","weight":9,"content":"租房会不会涨到8块"},{"progress":184685,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098305,"midHash":"619ed85f","id":"1837164757858881280","weight":9,"content":"遥遥领先"},{"progress":522875,"mode":1,"fontsize":25,"color":16777215,"ctime":1746240306,"midHash":"a3af0510","id":"1838355951107874048","weight":9,"content":"一点也不冲突，地中海气候就是这样的"},{"progress":1022988,"mode":1,"fontsize":25,"color":16777215,"ctime":1746192627,"midHash":"52498650","id":"1837955983662491904","weight":9,"content":"还在男多女少？哈哈哈哈哈哈哈"},{"progress":922576,"mode":1,"fontsize":25,"color":16777215,"ctime":1746162178,"midHash":"e1542b7b","id":"1837700566756335104","weight":9,"content":"主要共享单车单价有点高了"},{"progress":333588,"mode":1,"fontsize":25,"color":16777215,"ctime":1746158898,"midHash":"9fe1112b","id":"1837673045444011520","weight":9,"content":"卫健委调查也就止步于医疗了"},{"progress":821095,"mode":1,"fontsize":25,"color":16777215,"ctime":1746154537,"midHash":"f2016f18","id":"1837636464327162624","weight":9,"content":"本人广州本地人，有一说一，电鸡真是个无敌好东西，主要原因是早高峰公路大堵车，但是电鸡可以无视堵车"},{"progress":1127965,"mode":1,"fontsize":25,"color":16777215,"ctime":1746153773,"midHash":"f3ad3185","id":"1837630057234060032","weight":9,"content":"结婚容易离婚难"},{"progress":1086488,"mode":1,"fontsize":25,"color":16777215,"ctime":1746149451,"midHash":"59790c68","id":"1837593800278041344","weight":9,"content":"消费卷"},{"progress":918573,"mode":1,"fontsize":25,"color":16777215,"ctime":1746144899,"midHash":"387a66a7","id":"1837555619570394880","weight":9,"content":"一直就觉得共享单车这种模式走不远"},{"progress":319151,"mode":1,"fontsize":25,"color":16777215,"ctime":1746137039,"midHash":"21494e73","id":"1837489684776339200","weight":9,"content":"哈哈哈哈哈哈哈"},{"progress":1046983.9999999999,"mode":1,"fontsize":25,"color":16777215,"ctime":1746117601,"midHash":"58c33f1d","id":"1837326620890331904","weight":9,"content":"在那卖力补贴二胎三胎  其实补贴一胎才是最实在的 一胎都没有哪来2和3？"},{"progress":872388,"mode":1,"fontsize":25,"color":16777215,"ctime":1746114564,"midHash":"395a889e","id":"1837301148244690688","weight":9,"content":"广东深圳的电动车太让人害怕了"},{"progress":697513,"mode":1,"fontsize":25,"color":16777215,"ctime":1746112333,"midHash":"2b31a27c","id":"1837282431934682368","weight":9,"content":"供热的话应该考虑建在辽宁河北山东啊"},{"progress":852587,"mode":1,"fontsize":25,"color":16777215,"ctime":1746111683,"midHash":"16b9178d","id":"1837276979440347648","weight":9,"content":"电动自行车也算新能源"},{"progress":1094465,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106246,"midHash":"d70c341f","id":"1837231371148494592","weight":9,"content":"就这点儿毛毛雨还不够奶粉钱"},{"progress":4691,"mode":5,"fontsize":25,"color":15138834,"ctime":1746103404,"midHash":"9a784188","id":"1837207534374094592","weight":9,"content":"劳动最光荣，五一最快乐 ！！！"},{"progress":177788,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101550,"midHash":"9add2b1b","id":"1837191976467508992","weight":9,"content":"怕你不知道，航司大部分都是国资"},{"progress":253802,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099030,"midHash":"8a5ac001","id":"1837170836059677184","weight":9,"content":"哈哈哈哈"},{"progress":952704,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098939,"midHash":"3e6dcef2","id":"1837170073300050944","weight":9,"content":"在深圳那么多年一直都是8块钱1t。"},{"progress":958385,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098525,"midHash":"cb9b4b35","id":"1837166601598678528","weight":9,"content":"这上涨的价格才和我这小县城相当"},{"progress":243626,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098514,"midHash":"d0a5c6df","id":"1837166508057514752","weight":9,"content":"牛啊"},{"progress":199616,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098474,"midHash":"ee7c8a","id":"1837166172412982784","weight":9,"content":"蚌埠住了"},{"progress":80166,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097874,"midHash":"a2360b1b","id":"1837161141193748992","weight":9,"content":"到了暑期档应该还要延期"},{"progress":73728,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097002,"midHash":"b2c91eb2","id":"1837153828567678720","weight":9,"content":"离谱"},{"progress":236298,"mode":1,"fontsize":25,"color":16776960,"ctime":1746190939,"midHash":"1899ab69","id":"1837941826343411456","weight":9,"content":"公司：我从来不安排加班，只安排不加班完不成的工作，你看着办"},{"progress":1050107,"mode":1,"fontsize":25,"color":16777215,"ctime":1746163167,"midHash":"a4c1635e","id":"1837708855497876224","weight":9,"content":"可以开放单身辅助生育，也减少彩礼矛盾了。"},{"progress":1070655,"mode":1,"fontsize":25,"color":16777215,"ctime":1746162032,"midHash":"2f2f0378","id":"1837699334485967104","weight":9,"content":"现在生个孩子最便宜也得花两万，还没算养育成本"},{"progress":1016280,"mode":1,"fontsize":25,"color":16777215,"ctime":1746132877,"midHash":"9b220e9","id":"1837454767891619328","weight":9,"content":"怎么还这么多？"},{"progress":241598,"mode":1,"fontsize":25,"color":16777215,"ctime":1746117585,"midHash":"f794d45c","id":"1837326487972789248","weight":9,"content":"6666"},{"progress":1086779,"mode":1,"fontsize":25,"color":16777215,"ctime":1746115085,"midHash":"69d754ec","id":"1837305518709136384","weight":9,"content":"10万彩礼够吗？"},{"progress":612822,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113135,"midHash":"2c2918ad","id":"1837289157677058048","weight":9,"content":"是的，如果传统能源占比高，起码还有容错"},{"progress":607787,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104817,"midHash":"b0edd735","id":"1837219379994617856","weight":9,"content":"确实到现在还没有一个明确结论。大部分还是指向气温的波动导致太阳能发电设备突然降功率，导致频率失衡，电网崩溃。"},{"progress":861463,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104456,"midHash":"a37a3eaf","id":"1837216354441212416","weight":9,"content":"BRT基本就天河中心线路饱满"},{"progress":257774.99999999997,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104274,"midHash":"b0edd735","id":"1837214829736715264","weight":9,"content":"生理问题也要关爱一下呀"},{"progress":3511,"mode":1,"fontsize":25,"color":16777215,"ctime":1746103377,"midHash":"9a784188","id":"1837207305356803072","weight":9,"content":"劳动最光荣，五一最快乐 ！！！"},{"progress":1130667,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101737,"midHash":"5d0267cb","id":"1837193546789353728","weight":9,"content":"抽象"},{"progress":871934,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101506,"midHash":"2136c54d","id":"1837191606495729408","weight":9,"content":"深圳650w"},{"progress":1129686,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100437,"midHash":"5aec5a9e","id":"1837182640022364672","weight":9,"content":"6，上班顺便结个婚"},{"progress":993602,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100385,"midHash":"333dd94b","id":"1837182209468430080","weight":9,"content":"哈哈红红火火恍恍惚惚"},{"progress":182880,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097135,"midHash":"5ccbd650","id":"1837154941156989184","weight":9,"content":"笑死"},{"progress":49614,"mode":1,"fontsize":25,"color":16777215,"ctime":1746237827,"midHash":"976b3591","id":"1838335151319753728","weight":9,"content":"那是因为经济形势好大家都忙着赚钱没空看电影"},{"progress":121429,"mode":1,"fontsize":25,"color":16777215,"ctime":1746232246,"midHash":"64783fa8","id":"1838288339397393152","weight":9,"content":"那不就是价格歧视吗"},{"progress":729465,"mode":1,"fontsize":25,"color":16777215,"ctime":1746197182,"midHash":"58a1b15b","id":"1837994194544340736","weight":9,"content":"维护的钱从哪来"},{"progress":845863,"mode":1,"fontsize":25,"color":16777215,"ctime":1746196624,"midHash":"4bd6510c","id":"1837989517584603392","weight":9,"content":"电鸡的方便属性几乎完全是建立在对交规的践踏之上的"},{"progress":831626,"mode":1,"fontsize":25,"color":16777215,"ctime":1746194290,"midHash":"2377a886","id":"1837969940536112384","weight":9,"content":"上下班高峰期时速30已经很不错了"},{"progress":1028963,"mode":1,"fontsize":25,"color":16777215,"ctime":1746192175,"midHash":"ec6debe8","id":"1837952192481595904","weight":9,"content":"为什么是15岁，不应该是男22女20么？"},{"progress":719354,"mode":1,"fontsize":25,"color":16777215,"ctime":1746189852,"midHash":"2ee845cd","id":"1837932709956649984","weight":9,"content":"这么大规模用核电，维护和安全都是问题啊"},{"progress":801815,"mode":1,"fontsize":25,"color":16777215,"ctime":1746186635,"midHash":"20136ea0","id":"1837905726279166976","weight":9,"content":"哈哈哈哈哈哈哈哈哈哈"},{"progress":193014,"mode":1,"fontsize":25,"color":16776960,"ctime":1746185811,"midHash":"1655cfa7","id":"1837898806918657536","weight":9,"content":"利用二次元软色情开设网游赌场的米哈游刘伟成了全国劳模？"},{"progress":989067,"mode":1,"fontsize":25,"color":16777215,"ctime":1746184098,"midHash":"bc605935","id":"1837884443281993728","weight":8,"content":"这是好事儿啊"},{"progress":1010005,"mode":1,"fontsize":25,"color":16777215,"ctime":1746182470,"midHash":"8e080cb0","id":"1837870780521333504","weight":8,"content":"补偿性下降"},{"progress":186006,"mode":1,"fontsize":25,"color":16777215,"ctime":1746178053,"midHash":"62a006ef","id":"1837833732611022336","weight":8,"content":"下面普通工人干的不比他多?"},{"progress":1135090,"mode":1,"fontsize":25,"color":16777215,"ctime":1746177977,"midHash":"446cf139","id":"1837833097056508416","weight":8,"content":"合肥也能走在时尚潮流我是没想到的"},{"progress":1106446,"mode":1,"fontsize":25,"color":16777215,"ctime":1746177925,"midHash":"b3d2f093","id":"1837832654548944640","weight":8,"content":"这样歧视的对吗"},{"progress":1104858,"mode":1,"fontsize":25,"color":16777215,"ctime":1746177905,"midHash":"b3d2f093","id":"1837832490627392256","weight":8,"content":"？？"},{"progress":1004344,"mode":1,"fontsize":25,"color":16777215,"ctime":1746175831,"midHash":"7f88dd1b","id":"1837815088820843008","weight":8,"content":"这是好事阿"},{"progress":193641,"mode":1,"fontsize":25,"color":16777215,"ctime":1746174460,"midHash":"5e117981","id":"1837803588114614272","weight":8,"content":"真正的劳模都累死了，他们的老板却去领奖"},{"progress":579172,"mode":1,"fontsize":25,"color":16777215,"ctime":1746171134,"midHash":"b8f6b13","id":"1837775693526718208","weight":8,"content":"合着是电太多了是吧"},{"progress":57193,"mode":1,"fontsize":25,"color":16777215,"ctime":1746167107,"midHash":"857eaa84","id":"1837741908232302080","weight":8,"content":"哈哈哈"},{"progress":583826,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165685,"midHash":"446de176","id":"1837729981410084864","weight":8,"content":"这就是为啥西方暂缓电动车发展，环保背景下电网改造成本太高了"},{"progress":706547,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165645,"midHash":"2b29009c","id":"1837729644556730880","weight":8,"content":"这个真得支持了"},{"progress":345971,"mode":1,"fontsize":25,"color":16777215,"ctime":1746154800,"midHash":"2ccc9f9a","id":"1837638667670769920","weight":8,"content":"哈哈哈哈哈哈"},{"progress":242507,"mode":1,"fontsize":25,"color":16777215,"ctime":1746153835,"midHash":"f475fd75","id":"1837630578896791040","weight":8,"content":"教培没有加班，是因为所有时间都在上班"},{"progress":1132794,"mode":1,"fontsize":25,"color":16777215,"ctime":1746152662,"midHash":"964bae60","id":"1837620738220641024","weight":8,"content":"就算一百萬也不一定每個人都要結"},{"progress":1105132,"mode":1,"fontsize":25,"color":16777215,"ctime":1746152635,"midHash":"964bae60","id":"1837620506460374528","weight":8,"content":"結婚生孩是一輩子的事"},{"progress":943749,"mode":1,"fontsize":25,"color":16777215,"ctime":1746150983,"midHash":"fc648401","id":"1837606650165696768","weight":8,"content":"中运量公交是真的烦  三车道变两车道"},{"progress":49644,"mode":1,"fontsize":25,"color":16777215,"ctime":1746150557,"midHash":"bdbf793e","id":"1837603075578727168","weight":8,"content":"没什么好片"},{"progress":877914,"mode":1,"fontsize":25,"color":16777215,"ctime":1746150486,"midHash":"518cfe12","id":"1837602485943171328","weight":8,"content":"深圳人太多了，土地是否能承载这么多人"},{"progress":1024222,"mode":1,"fontsize":25,"color":16777215,"ctime":1746145786,"midHash":"48ac9487","id":"1837563060224116992","weight":8,"content":"这是好事啊"},{"progress":517607,"mode":1,"fontsize":25,"color":16777215,"ctime":1746145472,"midHash":"5eff4f0a","id":"1837560422678004224","weight":8,"content":"阳光充足和雨水充沛有点冲突呀"},{"progress":1102401,"mode":1,"fontsize":25,"color":16777215,"ctime":1746144014,"midHash":"72af2e09","id":"1837548193396227328","weight":8,"content":"以后离婚要罚款了"},{"progress":1106233,"mode":1,"fontsize":25,"color":16777215,"ctime":1746143531,"midHash":"302b2cae","id":"1837544139031053568","weight":8,"content":"十万都不够彩礼"},{"progress":1016431,"mode":1,"fontsize":25,"color":16777215,"ctime":1746136482,"midHash":"603002b5","id":"1837485007699025152","weight":8,"content":"遥遥领先"},{"progress":815785,"mode":1,"fontsize":25,"color":16777215,"ctime":1746117063,"midHash":"5dd49e9a","id":"1837322114974694912","weight":8,"content":"哈哈哈哈"},{"progress":47163,"mode":1,"fontsize":25,"color":16777215,"ctime":1746114394,"midHash":"82c16a35","id":"1837299724689287680","weight":8,"content":"真好"},{"progress":6600,"mode":1,"fontsize":25,"color":16777215,"ctime":1746114256,"midHash":"7585b9eb","id":"1837298562665514752","weight":8,"content":"高三明天上课喽"},{"progress":258163,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113338,"midHash":"17495c5b","id":"1837290860279147264","weight":8,"content":"哈哈哈哈哈"},{"progress":1105824,"mode":1,"fontsize":25,"color":16777215,"ctime":1746112298,"midHash":"cd410957","id":"1837282141512173056","weight":8,"content":"哈哈哈。太多了"},{"progress":248544,"mode":1,"fontsize":25,"color":16777215,"ctime":1746109703,"midHash":"54fe9548","id":"1837260372051607808","weight":8,"content":"应该被认定，这样可以强迫企业规避员工猝死的风险而更强烈的反对员工加班"},{"progress":182397,"mode":1,"fontsize":25,"color":16777215,"ctime":1746108681,"midHash":"fa825b44","id":"1837251798793029632","weight":8,"content":"哈哈哈哈哈哈哈哈哈"},{"progress":328591,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107968,"midHash":"718c03e2","id":"1837245818437416448","weight":8,"content":"哈哈哈哈哈哈哈"},{"progress":519976,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106709,"midHash":"c32632ed","id":"1837235256156394496","weight":8,"content":"西方追求可持续发展方面的东西其实蛮魔怔的。。"},{"progress":34077,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106438,"midHash":"f3d42444","id":"1837232978364411136","weight":8,"content":"去年全年的电影票房，还不到三部《哪吒2》"},{"progress":1010509,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106344,"midHash":"51926eec","id":"1837232194079730176","weight":8,"content":"好啊，继续"},{"progress":248103,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105196,"midHash":"463428f5","id":"1837222564939255040","weight":8,"content":"好！好！好！"},{"progress":997715,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104358,"midHash":"2bc6e21","id":"1837215534429933568","weight":8,"content":"好事"},{"progress":1123810,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104351,"midHash":"ca797b41","id":"1837215472320775168","weight":8,"content":"哈哈哈 想起离婚要买黄牛"},{"progress":187348,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101415,"midHash":"5d0267cb","id":"1837190842184538880","weight":8,"content":"太幽默了"},{"progress":1036090.9999999999,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101351,"midHash":"9a455b7d","id":"1837190308903873536","weight":8,"content":"←先结婚岁数到了再领证"},{"progress":848741,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101035,"midHash":"f74b2bd3","id":"1837187655914800384","weight":8,"content":"这个是很早之前的地铁线网图，现在早就不是这样了"},{"progress":975623,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101007,"midHash":"f41fe939","id":"1837187426829902592","weight":8,"content":"我这西江上游小县城都3块多一吨了……广州才不到两块……"},{"progress":965920,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099041,"midHash":"d2229e22","id":"1837170927973615104","weight":8,"content":"我这靠近水源四线城市水费都2.8了"},{"progress":343557,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098746,"midHash":"e09c7ec","id":"1837168453417999360","weight":8,"content":"hhhh"},{"progress":352404,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098605,"midHash":"f50701e8","id":"1837167273174492672","weight":8,"content":"哈哈哈哈哈哈哈"},{"progress":1132726,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098104,"midHash":"b6435087","id":"1837163073350832128","weight":8,"content":"？"},{"progress":869674,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098100,"midHash":"86fd8916","id":"1837163039267815680","weight":8,"content":"直接导致广州市容市貌进一步恶化了"},{"progress":252465,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097984,"midHash":"821b0128","id":"1837162064813117184","weight":8,"content":"哈哈哈哈哈"},{"progress":8189.999999999999,"mode":1,"fontsize":25,"color":16777215,"ctime":1746096873,"midHash":"624b74df","id":"1837152741622457344","weight":8,"content":"控告马前卒压制员工"},{"progress":188990,"mode":1,"fontsize":25,"color":16777215,"ctime":1746262473,"midHash":"5dc56ec8","id":"1838541900802817280","weight":8,"content":"哈哈哈 真是笑死"},{"progress":202362,"mode":1,"fontsize":25,"color":16777215,"ctime":1746261013,"midHash":"d9ffaae3","id":"1838529646724433152","weight":8,"content":"6666666666666"},{"progress":326366,"mode":1,"fontsize":25,"color":16777215,"ctime":1746260012,"midHash":"9b17eb56","id":"1838521254106682368","weight":8,"content":"不是男女关系的话也没这么大的关注度"},{"progress":187600,"mode":1,"fontsize":25,"color":16777215,"ctime":1746257109,"midHash":"26c951f6","id":"1838496899511513856","weight":8,"content":"这是好事儿啊"},{"progress":323831,"mode":1,"fontsize":25,"color":16777215,"ctime":1746256987,"midHash":"9fe87491","id":"1838495878601025280","weight":8,"content":"来了来了"},{"progress":193921,"mode":1,"fontsize":25,"color":16777215,"ctime":1746255656,"midHash":"9fe87491","id":"1838484710503282944","weight":8,"content":"笑死我了"},{"progress":1062325,"mode":1,"fontsize":25,"color":16777215,"ctime":1746254309,"midHash":"de528aa0","id":"1838473410989699328","weight":8,"content":"地方太大管不过来没能力管就直说，也不是不能分开，搞得大家都累"},{"progress":1089705,"mode":1,"fontsize":25,"color":16777215,"ctime":1746253919,"midHash":"bd6512ca","id":"1838470142988739840","weight":8,"content":"哈哈哈哈哈哈"},{"progress":58344,"mode":1,"fontsize":25,"color":16777215,"ctime":1746252419,"midHash":"bd6512ca","id":"1838457562400593408","weight":8,"content":"上榜是因为补票房"},{"progress":178333,"mode":1,"fontsize":25,"color":16777215,"ctime":1746251033,"midHash":"3a442b2d","id":"1838445931176301056","weight":7,"content":"哈哈哈哈哈"},{"progress":350541,"mode":1,"fontsize":25,"color":16777215,"ctime":1746249722,"midHash":"5d6ee64d","id":"1838434936856681984","weight":7,"content":"好"},{"progress":829024,"mode":1,"fontsize":25,"color":16777215,"ctime":1746249034,"midHash":"64d80b0f","id":"1838429162591939072","weight":7,"content":"市区平均40真不慢了"},{"progress":1002797,"mode":1,"fontsize":25,"color":16777215,"ctime":1746246098,"midHash":"4cc477fe","id":"1838404535241601280","weight":7,"content":"哈哈哈哈"},{"progress":967229,"mode":1,"fontsize":25,"color":16777215,"ctime":1746245117,"midHash":"f4bbb6b9","id":"1838396304171730432","weight":7,"content":"這個還是低，才2.55，很少有戶數能用到第二階梯"},{"progress":344236,"mode":1,"fontsize":25,"color":16777215,"ctime":1746244665,"midHash":"9bbdcc59","id":"1838392509861714176","weight":7,"content":"笑死"},{"progress":293056,"mode":1,"fontsize":25,"color":16777215,"ctime":1746244310,"midHash":"aa996276","id":"1838389539824487168","weight":7,"content":"如有"},{"progress":365186,"mode":1,"fontsize":25,"color":16777215,"ctime":1746243792,"midHash":"4cc477fe","id":"1838385186741060352","weight":7,"content":"哈哈哈哈"},{"progress":89922,"mode":1,"fontsize":25,"color":16777215,"ctime":1746243541,"midHash":"400f778b","id":"1838383087264904192","weight":7,"content":"哈哈哈哈哈哈哈哈哈哈"},{"progress":936323,"mode":1,"fontsize":25,"color":16777215,"ctime":1746243236,"midHash":"c9d9c46a","id":"1838380527288768256","weight":7,"content":"咋不说机动车都在非机动车道停车呢"},{"progress":1104593,"mode":5,"fontsize":18,"color":16777215,"ctime":1746243018,"midHash":"f14997be","id":"1838378697171304448","weight":7,"content":"？"},{"progress":68259,"mode":1,"fontsize":25,"color":16777215,"ctime":1746242064,"midHash":"49e56628","id":"1838370691545303040","weight":7,"content":"受众？你是说穷逼学生还是刚踏入社会的毕业生  自以为是主体"},{"progress":1011891,"mode":1,"fontsize":25,"color":16777215,"ctime":1746241805,"midHash":"2492811a","id":"1838368519205723392","weight":7,"content":"谁叫你们房子那么贵"},{"progress":228894,"mode":1,"fontsize":25,"color":16777215,"ctime":1746240905,"midHash":"6135b6ea","id":"1838360968845935872","weight":7,"content":"哈哈"},{"progress":186623,"mode":1,"fontsize":25,"color":16777215,"ctime":1746240601,"midHash":"ff3652d","id":"1838358421335391488","weight":7,"content":"6"},{"progress":192314,"mode":1,"fontsize":25,"color":16777215,"ctime":1746240210,"midHash":"6206310e","id":"1838355145206454528","weight":7,"content":"笑了"},{"progress":183825,"mode":1,"fontsize":25,"color":16707842,"ctime":1746239911,"midHash":"e322d4cb","id":"1838352635477044224","weight":7,"content":"哈哈哈哈哈"},{"progress":726588,"mode":1,"fontsize":25,"color":16777215,"ctime":1746237870,"midHash":"22cc13f9","id":"1838335512222482688","weight":7,"content":"核电很安全 放心"},{"progress":963216,"mode":1,"fontsize":25,"color":16777215,"ctime":1746235470,"midHash":"b3d4eeab","id":"1838315377256648704","weight":7,"content":"阶梯价格很合理"},{"progress":1135138,"mode":1,"fontsize":25,"color":16777215,"ctime":1746235252,"midHash":"d572da19","id":"1838313548573878784","weight":7,"content":"这样的金钱激励 治标不治本，还有可能进一步拉高离婚率。"},{"progress":1058115,"mode":5,"fontsize":25,"color":15138834,"ctime":1746234989,"midHash":"efef6901","id":"1838311341589542656","weight":7,"content":"生意"},{"progress":921795,"mode":5,"fontsize":25,"color":15138834,"ctime":1746234814,"midHash":"efef6901","id":"1838309879396409088","weight":7,"content":"共享单车的模式没毛病，吃相太难看了，现在的价格还不如自己买辆自行车骑"},{"progress":51001,"mode":1,"fontsize":25,"color":16777215,"ctime":1746234504,"midHash":"5d6a3557","id":"1838307276982176768","weight":7,"content":"好极了"},{"progress":230221,"mode":1,"fontsize":25,"color":16777215,"ctime":1746234417,"midHash":"f81d438e","id":"1838306545940127488","weight":7,"content":"唉"},{"progress":361259,"mode":1,"fontsize":25,"color":16777215,"ctime":1746232743,"midHash":"d2cd5d8f","id":"1838292508963197440","weight":7,"content":"我服了哈哈哈"},{"progress":426305,"mode":1,"fontsize":25,"color":16777215,"ctime":1746232513,"midHash":"52a0f51","id":"1838290578308534272","weight":7,"content":"1"},{"progress":30396,"mode":1,"fontsize":25,"color":16777215,"ctime":1746231829,"midHash":"7feb5e04","id":"1838284835073485312","weight":7,"content":"真没啥好看的"},{"progress":583459,"mode":1,"fontsize":25,"color":16777215,"ctime":1746231664,"midHash":"6cbd98fb","id":"1838283457730802944","weight":7,"content":"新能源发电不稳定，需要蓄能电站"},{"progress":235670,"mode":1,"fontsize":25,"color":16777215,"ctime":1746231044,"midHash":"a1fff94c","id":"1838278253337658880","weight":7,"content":"卷吧"},{"progress":532215,"mode":1,"fontsize":25,"color":16777215,"ctime":1746226061,"midHash":"200ce7b9","id":"1838236449020049408","weight":7,"content":"哈哈哈哈不冲突，白天暴晒夜晚暴雨全天狂风"},{"progress":188173,"mode":1,"fontsize":25,"color":16777215,"ctime":1746223890,"midHash":"b23a69ca","id":"1838218240220933120","weight":7,"content":"抽象"},{"progress":1133986,"mode":1,"fontsize":25,"color":16777215,"ctime":1746217235,"midHash":"38157f6f","id":"1838162411803404800","weight":7,"content":"嘿嘿嘿"},{"progress":1037578,"mode":1,"fontsize":25,"color":16777215,"ctime":1746217138,"midHash":"38157f6f","id":"1838161603141676032","weight":7,"content":"哈哈哈"},{"progress":226728,"mode":1,"fontsize":25,"color":16777215,"ctime":1746216389,"midHash":"38157f6f","id":"1838155318061016064","weight":7,"content":"哈哈"},{"progress":104000,"mode":1,"fontsize":25,"color":16777215,"ctime":1746214866,"midHash":"66332b6c","id":"1838142541103705088","weight":7,"content":"我就休一天，还没有加班工资，呵呵"},{"progress":1068828,"mode":1,"fontsize":25,"color":16777215,"ctime":1746209725,"midHash":"5cedbad9","id":"1838099412812508416","weight":7,"content":"一个孩子的抚养费一万怕不是毛毛雨吧"},{"progress":874654,"mode":1,"fontsize":25,"color":16777215,"ctime":1746208522,"midHash":"1788b2ee","id":"1838089325855276544","weight":7,"content":"。。。。。"},{"progress":851406,"mode":1,"fontsize":25,"color":16777215,"ctime":1746208495,"midHash":"1788b2ee","id":"1838089101007112448","weight":7,"content":"我真的好讨厌电鸡！！！！！！！！整个城市向下兼容"},{"progress":355648,"mode":1,"fontsize":25,"color":16777215,"ctime":1746207758,"midHash":"b35395ce","id":"1838082918057724416","weight":7,"content":"哈哈哈哈"},{"progress":198491,"mode":1,"fontsize":25,"color":16777215,"ctime":1746205957,"midHash":"c1945035","id":"1838067811198014464","weight":7,"content":"。？？o"},{"progress":79278,"mode":1,"fontsize":25,"color":16777215,"ctime":1746205250,"midHash":"4ef4abcd","id":"1838061874563158016","weight":7,"content":"哈哈哈哈哈哈"},{"progress":338011,"mode":1,"fontsize":25,"color":16777215,"ctime":1746203580,"midHash":"ec8a9e61","id":"1838047864195086848","weight":7,"content":"滑稽"},{"progress":259185,"mode":1,"fontsize":25,"color":16777215,"ctime":1746203348,"midHash":"a679860","id":"1838045923893263360","weight":7,"content":"哈哈哈哈"},{"progress":946320,"mode":1,"fontsize":25,"color":16777215,"ctime":1746203200,"midHash":"c840210b","id":"1838044679535646976","weight":7,"content":"电车老化故障率让人无语每天一堆趴窝笑死个人"},{"progress":351021,"mode":1,"fontsize":25,"color":16777215,"ctime":1746202682,"midHash":"400f3945","id":"1838040334874131712","weight":7,"content":"哈哈哈哈哈"},{"progress":1124001,"mode":1,"fontsize":25,"color":16777215,"ctime":1746200157,"midHash":"6650f236","id":"1838019150694469632","weight":7,"content":"爆笑了"},{"progress":524092.99999999994,"mode":1,"fontsize":25,"color":16777215,"ctime":1746199883,"midHash":"6650f236","id":"1838016858784023040","weight":7,"content":"雨水其实并不充沛。伊比利亚中部一大片沙漠"},{"progress":353683,"mode":1,"fontsize":25,"color":16777215,"ctime":1746199269,"midHash":"b394889f","id":"1838011705939236096","weight":7,"content":"哈哈哈"},{"progress":993363,"mode":1,"fontsize":25,"color":16777215,"ctime":1746199000,"midHash":"abe132be","id":"1838009446711405312","weight":7,"content":"哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈"},{"progress":260072,"mode":1,"fontsize":25,"color":16777215,"ctime":1746198385,"midHash":"dcfd981","id":"1838004286609577984","weight":7,"content":"哈哈哈哈哈"},{"progress":261899,"mode":1,"fontsize":25,"color":16777215,"ctime":1746198118,"midHash":"38dedabe","id":"1838002050207099392","weight":7,"content":"哈哈"},{"progress":346603,"mode":1,"fontsize":25,"color":16777215,"ctime":1746197955,"midHash":"6d07a22","id":"1838000684088398336","weight":7,"content":"。"},{"progress":996928,"mode":1,"fontsize":25,"color":16777215,"ctime":1746197822,"midHash":"d1a3031","id":"1837999569217710336","weight":7,"content":"太好了"},{"progress":261902,"mode":1,"fontsize":25,"color":16777215,"ctime":1746197277,"midHash":"dbf7c067","id":"1837994993281874176","weight":7,"content":"哈哈哈哈哈哈哈哈哈哈哈哈"},{"progress":255142,"mode":1,"fontsize":25,"color":16777215,"ctime":1746197265,"midHash":"dbf7c067","id":"1837994889858607616","weight":7,"content":"哈哈哈哈哈哈哈哈哈哈哈哈"},{"progress":352531,"mode":1,"fontsize":25,"color":16777215,"ctime":1746197042,"midHash":"6f3d4b05","id":"1837993026069348864","weight":7,"content":"哈哈哈哈"},{"progress":592969,"mode":1,"fontsize":25,"color":16777215,"ctime":1746197033,"midHash":"58a1b15b","id":"1837992951864327424","weight":7,"content":"听不懂思密达"},{"progress":957737,"mode":1,"fontsize":25,"color":16777215,"ctime":1746196826,"midHash":"4bd6510c","id":"1837991213895364608","weight":7,"content":"非机动车不是只有电鸡，超速电鸡对普通自行车的危害非常大"},{"progress":193224,"mode":1,"fontsize":25,"color":16777215,"ctime":1746196437,"midHash":"d665a8e3","id":"1837987944796005888","weight":6,"content":"？"},{"progress":186776,"mode":1,"fontsize":25,"color":16777215,"ctime":1746196430,"midHash":"d665a8e3","id":"1837987890169483520","weight":6,"content":"？？"},{"progress":354245,"mode":1,"fontsize":25,"color":16777215,"ctime":1746196246,"midHash":"e1b1ab79","id":"1837986342740054784","weight":6,"content":"哈哈哈哈哈"},{"progress":587502,"mode":1,"fontsize":25,"color":16777215,"ctime":1746195982,"midHash":"e962bf1f","id":"1837984135118146304","weight":6,"content":"这是不是一种过电压情况？"},{"progress":927991,"mode":1,"fontsize":25,"color":16777215,"ctime":1746194694,"midHash":"3ce85143","id":"1837973330348136704","weight":6,"content":"地铁还挺贵的"},{"progress":351237,"mode":1,"fontsize":25,"color":16777215,"ctime":1746193348,"midHash":"3198c276","id":"1837962032327083008","weight":6,"content":"无语了"},{"progress":1121895,"mode":5,"fontsize":25,"color":16777215,"ctime":1746193020,"midHash":"e29068f","id":"1837959284571441152","weight":6,"content":"其实合肥这个是还有原因是因为3号线调整，终点不再是幸福坝，导致原本新人都爱拍的开往幸福没了"},{"progress":1123035,"mode":1,"fontsize":25,"color":16777215,"ctime":1746192823,"midHash":"7708a332","id":"1837957633391842304","weight":6,"content":"哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈"},{"progress":728542,"mode":1,"fontsize":25,"color":16777215,"ctime":1746192555,"midHash":"7f6b67be","id":"1837955382224924416","weight":6,"content":"支持.."},{"progress":1000239,"mode":1,"fontsize":25,"color":16777215,"ctime":1746191570,"midHash":"db2b9f15","id":"1837947118615540992","weight":6,"content":"好事哈哈哈"},{"progress":147347,"mode":1,"fontsize":25,"color":16777215,"ctime":1746191019,"midHash":"10aa6fa0","id":"1837942494957635328","weight":6,"content":"大部分航空公司都亏惨了 不得不想办法了"},{"progress":1120198,"mode":1,"fontsize":25,"color":16777215,"ctime":1746190666,"midHash":"a4c961ee","id":"1837939534634631424","weight":6,"content":"？？？？？"},{"progress":1111231,"mode":1,"fontsize":25,"color":16777215,"ctime":1746190657,"midHash":"a4c961ee","id":"1837939458239530752","weight":6,"content":"？？？？"},{"progress":349824,"mode":1,"fontsize":25,"color":16777215,"ctime":1746190646,"midHash":"90653a87","id":"1837939371174087936","weight":6,"content":"哈哈哈哈"},{"progress":331230,"mode":1,"fontsize":25,"color":16777215,"ctime":1746190501,"midHash":"e79a63e7","id":"1837938149708733696","weight":6,"content":"哈哈哈哈是的"},{"progress":229393,"mode":1,"fontsize":25,"color":16777215,"ctime":1746190221,"midHash":"361c9682","id":"1837935804245670144","weight":6,"content":"H哈哈哈哈哈"},{"progress":703579,"mode":1,"fontsize":25,"color":16777215,"ctime":1746189871,"midHash":"127cc552","id":"1837932867645721344","weight":6,"content":"这是好事"},{"progress":255348,"mode":5,"fontsize":25,"color":15138834,"ctime":1746188947,"midHash":"39451887","id":"1837925113812102400","weight":6,"content":"双休都保证不了，倒是挺关心心理健康的。"},{"progress":767705,"mode":1,"fontsize":25,"color":16777215,"ctime":1746187752,"midHash":"b44f940c","id":"1837915093275560192","weight":6,"content":"这么看风电光伏股票还得跌，市场竞争太激烈"},{"progress":1148769,"mode":1,"fontsize":25,"color":16777215,"ctime":1746186329,"midHash":"512d09f1","id":"1837903156865510400","weight":6,"content":"单身税"},{"progress":253676,"mode":1,"fontsize":25,"color":16777215,"ctime":1746185937,"midHash":"dea02831","id":"1837899865989258496","weight":6,"content":"48小时"},{"progress":257189.00000000003,"mode":1,"fontsize":25,"color":16776960,"ctime":1746185933,"midHash":"1655cfa7","id":"1837899835974577920","weight":6,"content":"猿辅导企业真优秀，员工为其鞠躬尽瘁死而后已。"},{"progress":200828,"mode":1,"fontsize":25,"color":16777215,"ctime":1746185589,"midHash":"4e990513","id":"1837896948255184128","weight":6,"content":"？？？？"},{"progress":975358,"mode":1,"fontsize":25,"color":16777215,"ctime":1746184888,"midHash":"b1d5dcc6","id":"1837891067303722240","weight":6,"content":"哈哈哈哈哈"},{"progress":489641,"mode":1,"fontsize":25,"color":16777215,"ctime":1746183770,"midHash":"faa01b37","id":"1837881687364230400","weight":6,"content":"哈哈哈哈"},{"progress":1109169,"mode":1,"fontsize":25,"color":16777215,"ctime":1746183764,"midHash":"6c388e5a","id":"1837881635514092800","weight":6,"content":"哈哈哈哈哈哈哈"},{"progress":898690,"mode":1,"fontsize":25,"color":16777215,"ctime":1746183486,"midHash":"f9cc60fb","id":"1837879309185167104","weight":6,"content":"电动小车 方便。"},{"progress":1017760,"mode":1,"fontsize":25,"color":16777215,"ctime":1746182778,"midHash":"e7848763","id":"1837873368280623616","weight":6,"content":"这说明男性越来越尊重女性，不想压迫女性"},{"progress":1019029,"mode":1,"fontsize":25,"color":16777215,"ctime":1746182087,"midHash":"8bfcf3b7","id":"1837867574805694208","weight":6,"content":"好"},{"progress":260454,"mode":1,"fontsize":25,"color":16707842,"ctime":1746181652,"midHash":"da5e70ea","id":"1837863921013966848","weight":6,"content":"哈哈哈哈哈"},{"progress":256000,"mode":1,"fontsize":25,"color":16777215,"ctime":1746180745,"midHash":"364ba19","id":"1837856312520904704","weight":6,"content":"真搞笑"},{"progress":347731,"mode":1,"fontsize":25,"color":16777215,"ctime":1746180389,"midHash":"2159dc8a","id":"1837853327107421952","weight":6,"content":"hhh"},{"progress":249861,"mode":1,"fontsize":25,"color":16777215,"ctime":1746180202,"midHash":"b1d5dcc6","id":"1837851758219531008","weight":6,"content":"哈哈哈哈哈哈哈"},{"progress":344651,"mode":1,"fontsize":25,"color":16777215,"ctime":1746179087,"midHash":"a5d7ce4f","id":"1837842407169897216","weight":6,"content":"哈哈哈"},{"progress":350431,"mode":1,"fontsize":25,"color":16777215,"ctime":1746178508,"midHash":"32a2e6b","id":"1837837552707977216","weight":6,"content":"???"},{"progress":8575,"mode":1,"fontsize":25,"color":16777215,"ctime":1746177843,"midHash":"fbb7f097","id":"1837831973486464000","weight":6,"content":"我也是"},{"progress":1001801,"mode":1,"fontsize":25,"color":16777215,"ctime":1746177833,"midHash":"446cf139","id":"1837831886957761280","weight":6,"content":"好，好，但不理想了"},{"progress":246871,"mode":1,"fontsize":25,"color":16777215,"ctime":1746177474,"midHash":"28f39608","id":"1837828875959763456","weight":6,"content":"哈哈哈哈"},{"progress":1117076,"mode":1,"fontsize":25,"color":16777215,"ctime":1746175879,"midHash":"a4e951d0","id":"1837815497136062464","weight":6,"content":"二婚歧视警告"},{"progress":119569,"mode":1,"fontsize":25,"color":16777215,"ctime":1746174215,"midHash":"fc01c6cf","id":"1837801539835150336","weight":6,"content":"哈哈"},{"progress":188752,"mode":1,"fontsize":25,"color":16777215,"ctime":1746174049,"midHash":"e96f09fe","id":"1837800140086548736","weight":6,"content":"哈哈哈哈"},{"progress":105705,"mode":1,"fontsize":25,"color":16777215,"ctime":1746173962,"midHash":"e96f09fe","id":"1837799416434546432","weight":6,"content":"买房子的少了，其他可以多花了"},{"progress":492083,"mode":1,"fontsize":25,"color":16777215,"ctime":1746173698,"midHash":"a16b092","id":"1837797195802892800","weight":6,"content":"哈哈哈哈哈哈哈"},{"progress":312046,"mode":1,"fontsize":25,"color":16777215,"ctime":1746173648,"midHash":"472c12a3","id":"1837796777261211648","weight":6,"content":"我就不信这种高压工作、高压休假下，咱们能所谓的身心能健康，能激发更大的创造力咯"},{"progress":186507,"mode":1,"fontsize":25,"color":16777215,"ctime":1746173526,"midHash":"5876a393","id":"1837795759706210560","weight":6,"content":"哈哈哈哈哈哈哈哈"},{"progress":1026659.0000000001,"mode":1,"fontsize":25,"color":16777215,"ctime":1746172505,"midHash":"d040e0ea","id":"1837787188168407552","weight":6,"content":"适婚男多女少难道不是重男轻女的回旋镖吗，很多女婴都活不下来"},{"progress":347355,"mode":1,"fontsize":25,"color":16777215,"ctime":1746172172,"midHash":"fa70436","id":"1837784399350581760","weight":6,"content":"哈哈哈哈"},{"progress":519768,"mode":1,"fontsize":25,"color":16777215,"ctime":1746171520,"midHash":"b56ce936","id":"1837778931521360896","weight":6,"content":"不冲突，西班牙北部山区雨水多，风大，剩下的地方雨水少阳光充足风也不小。很少有阴天不下雨的大气静稳状态。"},{"progress":1142870,"mode":1,"fontsize":25,"color":16777215,"ctime":1746171354,"midHash":"560934dd","id":"1837777537242159872","weight":6,"content":"钱多了，骗婚不就好了，拿到补助，平分完，就离"},{"progress":348029,"mode":1,"fontsize":25,"color":16777215,"ctime":1746171042,"midHash":"97e75db5","id":"1837774917195179264","weight":6,"content":"哈哈哈哈"},{"progress":27123,"mode":1,"fontsize":25,"color":16777215,"ctime":1746170065,"midHash":"28d6d2c","id":"1837766723555243008","weight":6,"content":"一看全烂片"},{"progress":1052344,"mode":1,"fontsize":25,"color":16777215,"ctime":1746169983,"midHash":"f7aa6378","id":"1837766038004478720","weight":6,"content":"好事"},{"progress":267122,"mode":1,"fontsize":25,"color":16777215,"ctime":1746169865,"midHash":"97e75db5","id":"1837765042218087936","weight":6,"content":"hahahahha"},{"progress":706574,"mode":1,"fontsize":25,"color":16777215,"ctime":1746169792,"midHash":"f7aa6378","id":"1837764437617442560","weight":6,"content":"好事好事"},{"progress":256738.99999999997,"mode":1,"fontsize":25,"color":16777215,"ctime":1746169761,"midHash":"c98a13af","id":"1837764173661244672","weight":6,"content":"难道工贼就该死？"},{"progress":23350,"mode":1,"fontsize":25,"color":16777215,"ctime":1746169515,"midHash":"c98a13af","id":"1837762108931258368","weight":6,"content":"都是垃圾"},{"progress":205210,"mode":1,"fontsize":25,"color":16777215,"ctime":1746169225,"midHash":"bcff2428","id":"1837759679103773184","weight":6,"content":"哈哈哈"},{"progress":340991,"mode":1,"fontsize":25,"color":16777215,"ctime":1746168175,"midHash":"b19e6e07","id":"1837750868129761792","weight":6,"content":"哈哈哈哈哈哈哈哈哈"},{"progress":184063,"mode":1,"fontsize":25,"color":16777215,"ctime":1746167707,"midHash":"abe0c92d","id":"1837746944467086336","weight":5,"content":"红红火火恍恍惚惚哈哈哈哈"},{"progress":1015040,"mode":1,"fontsize":25,"color":16777215,"ctime":1746167249,"midHash":"a4f7dced","id":"1837743099649570048","weight":5,"content":"好事"},{"progress":1087121,"mode":1,"fontsize":25,"color":16777215,"ctime":1746166409,"midHash":"da229eb","id":"1837736055248899840","weight":5,"content":"好耶《有了这1000快就不愁彩礼了0.0"},{"progress":760083,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165698,"midHash":"2b29009c","id":"1837730093238139904","weight":5,"content":"好事啊"},{"progress":746711,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165685,"midHash":"2b29009c","id":"1837729981468382464","weight":5,"content":"支持"},{"progress":731495,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165670,"midHash":"2b29009c","id":"1837729852459994112","weight":5,"content":"支持"},{"progress":721843,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165660,"midHash":"2b29009c","id":"1837729772591966464","weight":5,"content":"支持"},{"progress":713998,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165652,"midHash":"2b29009c","id":"1837729706506575872","weight":5,"content":"支持"},{"progress":692094,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165630,"midHash":"2b29009c","id":"1837729523794550272","weight":5,"content":"支持"},{"progress":502854,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165441,"midHash":"2b29009c","id":"1837727935906560512","weight":5,"content":"哈哈哈哈哈哈哈哈哈哈哈"},{"progress":494085,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165432,"midHash":"2b29009c","id":"1837727861105090048","weight":5,"content":"哈哈哈哈哈"},{"progress":0,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165428,"midHash":"d94fa7e1","id":"1837727825369900800","weight":5,"content":"吃亏上当就一次，再给一次机会，永远不结婚不要孩子！！！"},{"progress":487234,"mode":1,"fontsize":25,"color":16777215,"ctime":1746165426,"midHash":"2b29009c","id":"1837727805505581824","weight":5,"content":"哈哈哈哈哈哈"},{"progress":856745,"mode":1,"fontsize":25,"color":16777215,"ctime":1746162162,"midHash":"f9c290e3","id":"1837700424434519296","weight":5,"content":"对喽"},{"progress":743531,"mode":1,"fontsize":25,"color":16777215,"ctime":1746162032,"midHash":"f9c290e3","id":"1837699340324520192","weight":5,"content":"和平的力量"},{"progress":275896,"mode":5,"fontsize":25,"color":16777215,"ctime":1746162008,"midHash":"61ada224","id":"1837699136766967808","weight":5,"content":"新需求？基本需求有没有保障再说吧"},{"progress":358636,"mode":1,"fontsize":25,"color":16777215,"ctime":1746161814,"midHash":"b6e9768f","id":"1837697513411877888","weight":5,"content":"这么多哈哈怪"},{"progress":181708,"mode":1,"fontsize":25,"color":16777215,"ctime":1746161717,"midHash":"9a7eafe4","id":"1837696692376977664","weight":5,"content":"啊？"},{"progress":174552,"mode":1,"fontsize":25,"color":16777215,"ctime":1746161525,"midHash":"65c373b2","id":"1837695082543724032","weight":5,"content":"只要市场还有足量供应，亏欠的该出清就出清吧"},{"progress":822514,"mode":1,"fontsize":25,"color":16777215,"ctime":1746161428,"midHash":"7f6821f1","id":"1837694273638881536","weight":5,"content":"看着数据已经很快了，我开车上班16公里基本都是快速路11个红绿灯需半小时你算算？"},{"progress":356464,"mode":1,"fontsize":25,"color":16777215,"ctime":1746161101,"midHash":"9794ab38","id":"1837691524373643264","weight":5,"content":"哈哈哈哈哈"},{"progress":346870,"mode":1,"fontsize":25,"color":16777215,"ctime":1746161091,"midHash":"9794ab38","id":"1837691443037766656","weight":5,"content":"？？？？？？？"},{"progress":994663,"mode":1,"fontsize":25,"color":16777215,"ctime":1746160938,"midHash":"6c7ce4cb","id":"1837690161451326976","weight":5,"content":"好！"},{"progress":1133502,"mode":1,"fontsize":25,"color":16777215,"ctime":1746160750,"midHash":"d9a39788","id":"1837688587605390080","weight":5,"content":"6"},{"progress":246381,"mode":1,"fontsize":25,"color":16777215,"ctime":1746160619,"midHash":"9d02350b","id":"1837687481962198784","weight":5,"content":"666"},{"progress":1017329,"mode":1,"fontsize":25,"color":16777215,"ctime":1746160139,"midHash":"62a93748","id":"1837683457116611328","weight":5,"content":"好"},{"progress":994737,"mode":1,"fontsize":25,"color":16777215,"ctime":1746160024,"midHash":"86fcc6fc","id":"1837682489708629504","weight":5,"content":"哈哈哈哈哈哈哈哈哈哈哈哈哈哈好"},{"progress":1104664,"mode":1,"fontsize":25,"color":16777215,"ctime":1746159920,"midHash":"a24d7c31","id":"1837681621957284864","weight":5,"content":"还是结婚的太多了，竟然要求25周岁以下才发"},{"progress":62299,"mode":1,"fontsize":25,"color":16777215,"ctime":1746159812,"midHash":"c18bfb2e","id":"1837680718176644352","weight":5,"content":"射雕也配？"},{"progress":647838,"mode":1,"fontsize":25,"color":16777215,"ctime":1746159751,"midHash":"e1503e66","id":"1837680206530442496","weight":5,"content":"哈哈哈"},{"progress":1004931,"mode":1,"fontsize":25,"color":16777215,"ctime":1746159743,"midHash":"a24d7c31","id":"1837680138767075072","weight":5,"content":"这是好事"},{"progress":191225,"mode":1,"fontsize":25,"color":16777215,"ctime":1746159479,"midHash":"74d2906a","id":"1837677924510675968","weight":5,"content":"笑死"},{"progress":484756,"mode":1,"fontsize":25,"color":16777215,"ctime":1746159258,"midHash":"24197273","id":"1837676070963983616","weight":5,"content":"哈哈哈哈哈"},{"progress":1020220,"mode":1,"fontsize":25,"color":16777215,"ctime":1746158932,"midHash":"f9195c69","id":"1837673330019926528","weight":5,"content":"没有排他性的婚姻是没有意义的"},{"progress":255643,"mode":1,"fontsize":25,"color":16777215,"ctime":1746158783,"midHash":"a2da20d0","id":"1837672082960657408","weight":5,"content":"佩服"},{"progress":1114430,"mode":1,"fontsize":25,"color":16777215,"ctime":1746158750,"midHash":"69d71516","id":"1837671806203698944","weight":5,"content":"就不结，就不结，就不结"},{"progress":1098205,"mode":1,"fontsize":25,"color":16777215,"ctime":1746158652,"midHash":"43ea3133","id":"1837670986351565056","weight":5,"content":"养个孩子到大学毕业最少要花费50万   这1000不要也罢"},{"progress":1103100,"mode":1,"fontsize":25,"color":16777215,"ctime":1746157892,"midHash":"e5a3a063","id":"1837664610682536704","weight":5,"content":"？？？？？"},{"progress":1117261,"mode":1,"fontsize":25,"color":16777215,"ctime":1746157737,"midHash":"4dcc05ba","id":"1837663311975042048","weight":5,"content":"哈哈哈"},{"progress":1145690,"mode":1,"fontsize":25,"color":16777215,"ctime":1746157649,"midHash":"3bc46b90","id":"1837662571898587136","weight":5,"content":"是的"},{"progress":997746,"mode":1,"fontsize":25,"color":16777215,"ctime":1746157454,"midHash":"1ea77795","id":"1837660936757137408","weight":5,"content":"好！好！好！"},{"progress":291901,"mode":1,"fontsize":25,"color":16777215,"ctime":1746157118,"midHash":"b05e4f9","id":"1837658112925425408","weight":5,"content":"，"},{"progress":97132,"mode":1,"fontsize":25,"color":16777215,"ctime":1746156732,"midHash":"c2bd9c05","id":"1837654878680608512","weight":5,"content":"真羡慕。我们还上三天班。只修两天"},{"progress":182932,"mode":1,"fontsize":25,"color":16777215,"ctime":1746156685,"midHash":"9d7f6312","id":"1837654482108886528","weight":5,"content":"工会？"},{"progress":252445,"mode":1,"fontsize":25,"color":16777215,"ctime":1746156649,"midHash":"e5a3a063","id":"1837654179138196992","weight":5,"content":"哈哈哈哈"},{"progress":614398,"mode":1,"fontsize":25,"color":16777215,"ctime":1746156536,"midHash":"7486a0ee","id":"1837653236342267392","weight":5,"content":"以前听说新能源的电不稳定，难用"},{"progress":332083,"mode":1,"fontsize":25,"color":16777215,"ctime":1746156237,"midHash":"6bc0af3c","id":"1837650727602940160","weight":5,"content":"哈哈哈哈哈哈"},{"progress":985008,"mode":1,"fontsize":25,"color":16777215,"ctime":1746155760,"midHash":"60fdde82","id":"1837646722084901632","weight":5,"content":"涿州5.15一吨，含污水处理"},{"progress":1028424,"mode":1,"fontsize":25,"color":16777215,"ctime":1746155759,"midHash":"3458ef98","id":"1837646717244228864","weight":5,"content":"适婚男多女少？什么叫适婚"},{"progress":191845,"mode":1,"fontsize":25,"color":16777215,"ctime":1746155396,"midHash":"93013ea5","id":"1837643671626586368","weight":5,"content":"哈哈哈"},{"progress":125924,"mode":1,"fontsize":25,"color":16777215,"ctime":1746155331,"midHash":"44a3fa5e","id":"1837643127909983744","weight":5,"content":"个性化价格和大数据杀熟，说得这么清新脱俗"},{"progress":686502,"mode":1,"fontsize":25,"color":16777215,"ctime":1746155100,"midHash":"856e6f9f","id":"1837641190225345280","weight":5,"content":"买入核电？"},{"progress":345730,"mode":1,"fontsize":25,"color":16777215,"ctime":1746154664,"midHash":"49f77878","id":"1837637528958764800","weight":5,"content":"？？？？"},{"progress":856564,"mode":1,"fontsize":25,"color":16777215,"ctime":1746154642,"midHash":"29c3aa6e","id":"1837637344929475072","weight":5,"content":"那tm摩托车身为合法购买合法上牌合法考取驾驶证的机动车为什么要禁行"},{"progress":1062749,"mode":1,"fontsize":25,"color":16777215,"ctime":1746154589,"midHash":"134f0c35","id":"1837636900157599232","weight":5,"content":"重点，户籍“股东，大部分都不一定是股东，所以等于放屁"},{"progress":1122511,"mode":1,"fontsize":25,"color":16777215,"ctime":1746154207,"midHash":"4ab0765e","id":"1837633695264205056","weight":5,"content":"结婚也有考公年龄限制了啊？？"},{"progress":185661,"mode":1,"fontsize":25,"color":16777215,"ctime":1746154167,"midHash":"a390dc08","id":"1837633365265113088","weight":5,"content":"哈哈哈哈哈"},{"progress":685767,"mode":1,"fontsize":25,"color":16777215,"ctime":1746153972,"midHash":"e0d8768f","id":"1837631722398418176","weight":5,"content":"好好好"},{"progress":593662,"mode":1,"fontsize":25,"color":16777215,"ctime":1746153903,"midHash":"e0d8768f","id":"1837631144767153152","weight":5,"content":"哈哈哈哈哈哈哈"},{"progress":502299,"mode":1,"fontsize":25,"color":16777215,"ctime":1746153801,"midHash":"e0d8768f","id":"1837630288298772736","weight":4,"content":"好好好"},{"progress":336773,"mode":1,"fontsize":25,"color":16777215,"ctime":1746153609,"midHash":"85a6fd7b","id":"1837628680663942144","weight":4,"content":"笑死"},{"progress":1092432,"mode":1,"fontsize":25,"color":16777215,"ctime":1746153369,"midHash":"f7beb116","id":"1837626664965187584","weight":4,"content":"哈哈哈哈太幽默了"},{"progress":669255,"mode":1,"fontsize":25,"color":16777215,"ctime":1746152946,"midHash":"f7beb116","id":"1837623115602623744","weight":4,"content":"哈哈哈哈"},{"progress":64093.99999999999,"mode":1,"fontsize":25,"color":16777215,"ctime":1746152739,"midHash":"e0d8768f","id":"1837621385435529984","weight":4,"content":"好好好"},{"progress":338528,"mode":1,"fontsize":25,"color":16777215,"ctime":1746152720,"midHash":"f7beb116","id":"1837621222889440256","weight":4,"content":"哈哈哈哈哈哈哈哈哈哈"},{"progress":337996,"mode":1,"fontsize":25,"color":16777215,"ctime":1746152714,"midHash":"cf63a925","id":"1837621175434413568","weight":4,"content":"？？？"},{"progress":83231,"mode":1,"fontsize":25,"color":16777215,"ctime":1746152446,"midHash":"f7beb116","id":"1837618924779870208","weight":4,"content":"哈哈哈哈哈哈"},{"progress":337590,"mode":1,"fontsize":25,"color":16777215,"ctime":1746152309,"midHash":"ff11b521","id":"1837617778350186496","weight":4,"content":"泛道德化也不是什么好事"},{"progress":836557,"mode":1,"fontsize":25,"color":16777215,"ctime":1746152229,"midHash":"331bd8c3","id":"1837617104191766272","weight":4,"content":"哈哈哈"},{"progress":1111956,"mode":1,"fontsize":25,"color":16777215,"ctime":1746151956,"midHash":"e99c8c79","id":"1837614813321696000","weight":4,"content":"一点都不装哈哈哈35以上的有多少？还不是因为生不了不想浪费钱"},{"progress":997905,"mode":1,"fontsize":25,"color":16777215,"ctime":1746151915,"midHash":"1d8c8a6b","id":"1837614471669947904","weight":4,"content":"好事"},{"progress":349668,"mode":1,"fontsize":25,"color":16777215,"ctime":1746151898,"midHash":"534a51b6","id":"1837614327402643456","weight":4,"content":"？？？"},{"progress":939452,"mode":1,"fontsize":25,"color":15138834,"ctime":1746151862,"midHash":"229c00c1","id":"1837614028013522944","weight":4,"content":"成都的brt在二环高架上，效果明显就好多了"},{"progress":466171,"mode":1,"fontsize":25,"color":16777215,"ctime":1746151739,"midHash":"2451f244","id":"1837612995485370368","weight":4,"content":"可以支持"},{"progress":61555,"mode":1,"fontsize":25,"color":16777215,"ctime":1746151720,"midHash":"856e6f9f","id":"1837612838785441280","weight":4,"content":"哈哈哈"},{"progress":331248,"mode":1,"fontsize":25,"color":16777215,"ctime":1746151402,"midHash":"9dcfc880","id":"1837610171132685824","weight":4,"content":"笑死"},{"progress":96805,"mode":1,"fontsize":25,"color":16777215,"ctime":1746151300,"midHash":"bc5d63e2","id":"1837609312105827584","weight":4,"content":"平时单休，劳动节调休的怎么凑假期啊？"},{"progress":817129,"mode":1,"fontsize":25,"color":16777215,"ctime":1746151236,"midHash":"ff2b1ef","id":"1837608776141324288","weight":4,"content":"哈哈哈哈哈"},{"progress":265550,"mode":1,"fontsize":25,"color":16777215,"ctime":1746150826,"midHash":"d1eb0bee","id":"1837605333338888960","weight":4,"content":"哈哈哈哈哈哈"},{"progress":4631,"mode":1,"fontsize":25,"color":16777215,"ctime":1746150786,"midHash":"996dd454","id":"1837604999723575808","weight":4,"content":"哈哈哈哈哈哈"},{"progress":192000,"mode":1,"fontsize":25,"color":16777215,"ctime":1746149299,"midHash":"9fc65b31","id":"1837592530016473856","weight":4,"content":"哈哈"},{"progress":201156,"mode":1,"fontsize":25,"color":16777215,"ctime":1746149016,"midHash":"ffaa334e","id":"1837590152626311936","weight":4,"content":"好笑"},{"progress":121037,"mode":1,"fontsize":25,"color":16777215,"ctime":1746148566,"midHash":"59790c68","id":"1837586377383488000","weight":4,"content":"hhhhhhhhhhhhh"},{"progress":259348,"mode":1,"fontsize":25,"color":16777215,"ctime":1746148112,"midHash":"a4c376e0","id":"1837582566195613952","weight":4,"content":"666"},{"progress":201225,"mode":1,"fontsize":25,"color":16777215,"ctime":1746148052,"midHash":"a2a7f4bb","id":"1837582067769658112","weight":4,"content":"典"},{"progress":230188,"mode":1,"fontsize":25,"color":16777215,"ctime":1746147597,"midHash":"b77920dc","id":"1837578249803428352","weight":4,"content":"。。。。。扎心了"},{"progress":188820,"mode":1,"fontsize":25,"color":16777215,"ctime":1746146590,"midHash":"5ba3c4c9","id":"1837569799128542976","weight":4,"content":"资本家开始洗白当劳模咯"},{"progress":1115880,"mode":1,"fontsize":25,"color":16777215,"ctime":1746146209,"midHash":"6338db3b","id":"1837566606088741120","weight":4,"content":"这些补贴都相当于是单身狗和丁克们出的（狗头"},{"progress":1006870,"mode":1,"fontsize":25,"color":16777215,"ctime":1746145549,"midHash":"12d75d69","id":"1837561071234886656","weight":4,"content":"好"},{"progress":517030,"mode":1,"fontsize":25,"color":16777215,"ctime":1746145005,"midHash":"703a6cf0","id":"1837556508930720768","weight":4,"content":"哈哈哈啊"},{"progress":256673.99999999997,"mode":1,"fontsize":25,"color":16777215,"ctime":1746144201,"midHash":"da6fe9c3","id":"1837549756739230464","weight":4,"content":"哎"},{"progress":347459,"mode":1,"fontsize":25,"color":16777215,"ctime":1746143909,"midHash":"fa3d04","id":"1837547308565278208","weight":4,"content":"哈哈哈哈哈哈哈哈哈"},{"progress":646192,"mode":1,"fontsize":25,"color":15138834,"ctime":1746143648,"midHash":"da0ccad3","id":"1837545124004041216","weight":4,"content":"西班牙用大规模核电又没有掌握核燃料产区，那有开始任人拿捏"},{"progress":186271,"mode":1,"fontsize":25,"color":16777215,"ctime":1746143205,"midHash":"d019e111","id":"1837541407582666752","weight":4,"content":"搞笑"},{"progress":7360,"mode":1,"fontsize":25,"color":16777215,"ctime":1746142585,"midHash":"67965b47","id":"1837536207299594240","weight":4,"content":"快乐"},{"progress":252091,"mode":1,"fontsize":25,"color":16777215,"ctime":1746139731,"midHash":"2fd5464f","id":"1837512266934069504","weight":4,"content":"厉害厉害"},{"progress":1037141.0000000001,"mode":1,"fontsize":25,"color":16777215,"ctime":1746139025,"midHash":"bc664af1","id":"1837506337655876608","weight":4,"content":"我都不介意未婚小黑孩了，还会在意结婚否？"},{"progress":815635,"mode":1,"fontsize":25,"color":16777215,"ctime":1746137501,"midHash":"21494e73","id":"1837493556261657856","weight":4,"content":"广州都养不起BRT了"},{"progress":507058,"mode":1,"fontsize":25,"color":16777215,"ctime":1746137163,"midHash":"21494e73","id":"1837490725609774592","weight":4,"content":"问题是这些电不稳定"},{"progress":156742,"mode":1,"fontsize":25,"color":16777215,"ctime":1746136854,"midHash":"21494e73","id":"1837488129897403648","weight":4,"content":"哈哈哈哈哈哈哈"},{"progress":1116472,"mode":1,"fontsize":25,"color":16777215,"ctime":1746136441,"midHash":"3f936524","id":"1837484666626778880","weight":4,"content":"对于不想结婚和结了婚后悔的，这些补贴没有事实影响。"},{"progress":962590,"mode":1,"fontsize":25,"color":16777215,"ctime":1746136104,"midHash":"88bbfaf9","id":"1837481841309892864","weight":4,"content":"支持"},{"progress":226251,"mode":1,"fontsize":25,"color":16777215,"ctime":1746136092,"midHash":"4d090c5e","id":"1837481735747831808","weight":4,"content":"哎可惜了"},{"progress":73876,"mode":1,"fontsize":25,"color":16777215,"ctime":1746131695,"midHash":"142d25e","id":"1837444852120366592","weight":4,"content":"孤独摇滚不比那些国产烂剧强很多？"},{"progress":1112850,"mode":1,"fontsize":25,"color":16777215,"ctime":1746131628,"midHash":"19b06bc1","id":"1837444291652601088","weight":4,"content":"啊这～"},{"progress":982384,"mode":1,"fontsize":25,"color":16777215,"ctime":1746129190,"midHash":"9b40debb","id":"1837423838472991744","weight":4,"content":"鹤壁市，河南四线城市，水价早就4.5一方了"},{"progress":497885,"mode":1,"fontsize":25,"color":16777215,"ctime":1746127695,"midHash":"72185bec","id":"1837411302218791424","weight":4,"content":"哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈"},{"progress":487545,"mode":1,"fontsize":25,"color":16777215,"ctime":1746127678,"midHash":"72185bec","id":"1837411156005488384","weight":4,"content":"哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈"},{"progress":966491,"mode":1,"fontsize":25,"color":16777215,"ctime":1746126737,"midHash":"b57da2de","id":"1837403258516493056","weight":4,"content":"水就是应该大城市便宜啊。处理和运输的效率都更高。"},{"progress":326993,"mode":1,"fontsize":25,"color":16777215,"ctime":1746125671,"midHash":"d0762177","id":"1837394321000040960","weight":4,"content":"hhhhhh"},{"progress":188133,"mode":1,"fontsize":25,"color":16777215,"ctime":1746125532,"midHash":"d0762177","id":"1837393155293636608","weight":4,"content":"???"},{"progress":987007,"mode":1,"fontsize":25,"color":16777215,"ctime":1746124573,"midHash":"1dff6462","id":"1837385109318789632","weight":4,"content":"哈哈哈哈哈哈哈哈哈"},{"progress":1142192,"mode":1,"fontsize":25,"color":16777215,"ctime":1746124437,"midHash":"69f40438","id":"1837383968484996864","weight":4,"content":"hhhhhh"},{"progress":247469,"mode":1,"fontsize":25,"color":16777215,"ctime":1746121509,"midHash":"1045fbd9","id":"1837359409500809984","weight":4,"content":"唉"},{"progress":1108112,"mode":1,"fontsize":25,"color":16777215,"ctime":1746121373,"midHash":"d082160e","id":"1837358261737974528","weight":4,"content":"现金奖励才是实实在在的，其他什么券都是虚的"},{"progress":557557,"mode":1,"fontsize":25,"color":16777215,"ctime":1746121153,"midHash":"b9fbefa5","id":"1837356418584504832","weight":4,"content":"混动"},{"progress":188649,"mode":1,"fontsize":25,"color":16777215,"ctime":1746120484,"midHash":"c60f8ace","id":"1837350811496219136","weight":4,"content":"哈哈哈哈哈"},{"progress":203931,"mode":1,"fontsize":25,"color":16777215,"ctime":1746119834,"midHash":"8e550e73","id":"1837345353406708480","weight":3,"content":"哈哈哈哈哈哈哈"},{"progress":533165,"mode":1,"fontsize":25,"color":16777215,"ctime":1746119832,"midHash":"6bf1cb59","id":"1837345341394601472","weight":3,"content":"这方面东大是真遥遥领先强太多"},{"progress":268479,"mode":1,"fontsize":25,"color":16777215,"ctime":1746119352,"midHash":"f1fe56ee","id":"1837341312144225536","weight":3,"content":"哈哈"},{"progress":1128396,"mode":1,"fontsize":25,"color":16777215,"ctime":1746117847,"midHash":"eef269c0","id":"1837328689269473024","weight":3,"content":"？"},{"progress":340328,"mode":1,"fontsize":25,"color":16777215,"ctime":1746117691,"midHash":"f794d45c","id":"1837327379212183296","weight":3,"content":"哈哈哈"},{"progress":257043,"mode":1,"fontsize":25,"color":16777215,"ctime":1746117602,"midHash":"f794d45c","id":"1837326632181464832","weight":3,"content":"哈哈哈哈哈"},{"progress":275315,"mode":1,"fontsize":25,"color":16777215,"ctime":1746117443,"midHash":"70f82d88","id":"1837325299147215616","weight":3,"content":"、"},{"progress":340690,"mode":1,"fontsize":25,"color":16777215,"ctime":1746117348,"midHash":"531bc41e","id":"1837324500980033280","weight":3,"content":"哈哈哈哈哈哈哈哈哈哈哈"},{"progress":990463,"mode":1,"fontsize":25,"color":16777215,"ctime":1746117241,"midHash":"5dd49e9a","id":"1837323605361938176","weight":3,"content":"哈哈哈哈哈哈"},{"progress":259976,"mode":1,"fontsize":25,"color":16777215,"ctime":1746116846,"midHash":"6fdd0fc1","id":"1837320288078644480","weight":3,"content":"哈哈哈哈哈哈哈恍恍惚惚哈哈哈哈哈哈哈哈"},{"progress":3390,"mode":1,"fontsize":25,"color":16777215,"ctime":1746116585,"midHash":"6fdd0fc1","id":"1837318102460219392","weight":3,"content":"哈哈哈哈哈哈哈哈哈哈"},{"progress":1171,"mode":1,"fontsize":25,"color":16777215,"ctime":1746116579,"midHash":"6fdd0fc1","id":"1837318053898486272","weight":3,"content":"哈哈哈哈哈哈哈哈哈哈"},{"progress":265876,"mode":5,"fontsize":25,"color":16707842,"ctime":1746116555,"midHash":"df04000f","id":"1837317850927783680","weight":3,"content":"确实，现在焦虑症+抑郁症，准备辞职休息了"},{"progress":991070,"mode":1,"fontsize":25,"color":16777215,"ctime":1746116121,"midHash":"acea4b47","id":"1837314207570500864","weight":3,"content":"连连看"},{"progress":1030968.0000000001,"mode":1,"fontsize":25,"color":16777215,"ctime":1746115978,"midHash":"7b25198a","id":"1837313008729752832","weight":3,"content":"15岁以上是啥意思？还能提前结婚？"},{"progress":956502,"mode":5,"fontsize":25,"color":15138834,"ctime":1746115932,"midHash":"9f9ca105","id":"1837312626644839424","weight":3,"content":"喜迎"},{"progress":1091361,"mode":1,"fontsize":25,"color":16777215,"ctime":1746115596,"midHash":"772ba193","id":"1837309805103427584","weight":3,"content":"发这么点钱，还不够38.8w的彩礼钱"},{"progress":1116587,"mode":1,"fontsize":25,"color":16777215,"ctime":1746115285,"midHash":"9f2a1aab","id":"1837307197831779328","weight":3,"content":"我这手机五六年前买的，还是一般的，也要1800，这1000块钱够个屁用啊"},{"progress":198733,"mode":1,"fontsize":25,"color":16777215,"ctime":1746115023,"midHash":"772ba193","id":"1837304994270483968","weight":3,"content":"遥遥领先"},{"progress":997716,"mode":1,"fontsize":25,"color":16777215,"ctime":1746114996,"midHash":"69d754ec","id":"1837304771728567040","weight":3,"content":"好事啊"},{"progress":647897,"mode":1,"fontsize":25,"color":16777215,"ctime":1746114616,"midHash":"69d754ec","id":"1837301587035473920","weight":3,"content":"哈哈"},{"progress":258808,"mode":1,"fontsize":25,"color":16777215,"ctime":1746114467,"midHash":"6a60e9eb","id":"1837300335925057024","weight":3,"content":"哈哈哈哈"},{"progress":917710,"mode":1,"fontsize":25,"color":16777215,"ctime":1746114116,"midHash":"17495c5b","id":"1837297389091051264","weight":3,"content":"哈哈哈哈"},{"progress":1115753,"mode":1,"fontsize":25,"color":16777215,"ctime":1746114041,"midHash":"eac1a114","id":"1837296761639558656","weight":3,"content":"给钱就不错了 还有嫌钱少 钱多了那骗补好了"},{"progress":262687,"mode":1,"fontsize":25,"color":16777215,"ctime":1746114015,"midHash":"f873b07e","id":"1837296545415022592","weight":3,"content":"哈哈哈哈"},{"progress":756357,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113943,"midHash":"17495c5b","id":"1837295936661996544","weight":3,"content":"哈哈哈哈"},{"progress":667778,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113729,"midHash":"17495c5b","id":"1837294144544938240","weight":3,"content":"哈哈哈哈哈"},{"progress":660056,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113717,"midHash":"17495c5b","id":"1837294045517388544","weight":3,"content":"哈哈哈哈"},{"progress":1044328,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113705,"midHash":"2bc9f330","id":"1837293944317257984","weight":3,"content":"未婚生育是合法的，也会渐渐成为主流"},{"progress":592689,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113643,"midHash":"17495c5b","id":"1837293420171932672","weight":3,"content":"哈哈哈哈"},{"progress":502778,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113619,"midHash":"f5b664b2","id":"1837293216471360256","weight":3,"content":"新能源太假了"},{"progress":500618,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113544,"midHash":"17495c5b","id":"1837292589473363968","weight":3,"content":"哈哈哈哈"},{"progress":100930,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113499,"midHash":"596cbb5f","id":"1837292217514376704","weight":3,"content":"所以不要再骂调休，自己忍不住非要去消费怎么斗争"},{"progress":510664,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113432,"midHash":"f78ae3fc","id":"1837291648490129664","weight":3,"content":"哈哈哈哈哈哈哈"},{"progress":294580,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113377,"midHash":"17495c5b","id":"1837291191386087424","weight":3,"content":"哈哈哈哈哈"},{"progress":190935,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113266,"midHash":"17495c5b","id":"1837290257331301888","weight":3,"content":"哈哈哈哈"},{"progress":725112,"mode":1,"fontsize":25,"color":16777215,"ctime":1746113011,"midHash":"4eeca8d0","id":"1837288118756599296","weight":3,"content":"好"},{"progress":861219,"mode":1,"fontsize":25,"color":16777215,"ctime":1746112437,"midHash":"f0d24af","id":"1837283307185084928","weight":3,"content":"哇偶，广州金沙洲大桥！每晚电鸡多如牛毛！"},{"progress":850630,"mode":1,"fontsize":25,"color":16777215,"ctime":1746112383,"midHash":"4693df99","id":"1837282849427068928","weight":3,"content":"广州现在几乎每天都有电鸡新闻"},{"progress":1017599,"mode":1,"fontsize":25,"color":16777215,"ctime":1746112168,"midHash":"4b8883ef","id":"1837281047713476096","weight":3,"content":"好事！"},{"progress":347123,"mode":1,"fontsize":25,"color":16777215,"ctime":1746111977,"midHash":"5c3413ee","id":"1837279448652259840","weight":3,"content":"？？？？？？？？"},{"progress":248775,"mode":1,"fontsize":25,"color":16777215,"ctime":1746111882,"midHash":"9e180445","id":"1837278650828472320","weight":3,"content":"哈哈哈哈哈哈"},{"progress":61451,"mode":1,"fontsize":25,"color":16777215,"ctime":1746111786,"midHash":"5c3413ee","id":"1837277842955089408","weight":3,"content":"6"},{"progress":259810.99999999997,"mode":1,"fontsize":25,"color":16777215,"ctime":1746111554,"midHash":"cd410957","id":"1837275898626403328","weight":3,"content":"哈哈哈哈哈"},{"progress":1092051,"mode":1,"fontsize":25,"color":16777215,"ctime":1746111222,"midHash":"495d9057","id":"1837273112216477952","weight":3,"content":"25岁以下？？？这是什么意思？？？"},{"progress":338063,"mode":1,"fontsize":25,"color":16777215,"ctime":1746111089,"midHash":"160f50c3","id":"1837272000608487168","weight":3,"content":"哈哈哈哈"},{"progress":778646,"mode":1,"fontsize":25,"color":16777215,"ctime":1746110930,"midHash":"e1542df8","id":"1837270665040928256","weight":3,"content":"没办法，火电太稳了，新能源还需要配套储能"},{"progress":247279,"mode":1,"fontsize":25,"color":16777215,"ctime":1746110877,"midHash":"ab2a7438","id":"1837270214841706240","weight":3,"content":"？"},{"progress":63559,"mode":1,"fontsize":25,"color":16777215,"ctime":1746110870,"midHash":"14b485f4","id":"1837270162370838784","weight":3,"content":"？？？"},{"progress":1047634,"mode":1,"fontsize":25,"color":16777215,"ctime":1746110565,"midHash":"93d036c8","id":"1837267599701460992","weight":3,"content":"报销彩礼"},{"progress":1127348,"mode":1,"fontsize":25,"color":16777215,"ctime":1746110084,"midHash":"c1fa242f","id":"1837263566844311040","weight":3,"content":"鼓励 冲动结婚 哈？"},{"progress":274684,"mode":1,"fontsize":25,"color":16777215,"ctime":1746110010,"midHash":"bb8a7123","id":"1837262943344273152","weight":3,"content":"哈哈哈哈"},{"progress":1128396,"mode":1,"fontsize":25,"color":16777215,"ctime":1746110003,"midHash":"841ffc09","id":"1837262884892273152","weight":3,"content":"？"},{"progress":327876,"mode":1,"fontsize":25,"color":16777215,"ctime":1746109789,"midHash":"f66d8382","id":"1837261090728755968","weight":3,"content":"哈哈哈 笑死"},{"progress":60131,"mode":1,"fontsize":25,"color":16777215,"ctime":1746109677,"midHash":"cefe0c33","id":"1837260153972632064","weight":3,"content":"啊？"},{"progress":182536,"mode":1,"fontsize":25,"color":16777215,"ctime":1746109003,"midHash":"841ffc09","id":"1837254500109687040","weight":3,"content":"？"},{"progress":277701,"mode":1,"fontsize":25,"color":16777215,"ctime":1746108421,"midHash":"85b9b1ea","id":"1837249613720494336","weight":3,"content":"抽象， 就不能说也落实下双休，非得双休落实后才能落实其他东西是吧"},{"progress":599611,"mode":1,"fontsize":25,"color":16777215,"ctime":1746108243,"midHash":"718c03e2","id":"1837248121185767680","weight":3,"content":"哈哈哈哈"},{"progress":1119470,"mode":1,"fontsize":25,"color":16777215,"ctime":1746108211,"midHash":"6c828718","id":"1837247855367262720","weight":2,"content":"一次约会金额"},{"progress":998769,"mode":1,"fontsize":25,"color":16777215,"ctime":1746108068,"midHash":"6c828718","id":"1837246651820004352","weight":2,"content":"漂亮"},{"progress":1138591,"mode":1,"fontsize":25,"color":16777215,"ctime":1746108010,"midHash":"a36039d6","id":"1837246172612410880","weight":2,"content":"？"},{"progress":695666,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107956,"midHash":"bb59dd8d","id":"1837245717488911104","weight":2,"content":"好"},{"progress":9119,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107743,"midHash":"b731cb0e","id":"1837243925556627712","weight":2,"content":"我刚下班"},{"progress":6441,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107713,"midHash":"c6d6b8fc","id":"1837243681322260480","weight":2,"content":"哈哈哈哈哈"},{"progress":341980,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107442,"midHash":"19ef68d9","id":"1837241401650922496","weight":2,"content":"哈哈哈哈哈"},{"progress":353609,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107421,"midHash":"6c828718","id":"1837241228517932544","weight":2,"content":"哈哈哈哈哈哈哈"},{"progress":1116964,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107339,"midHash":"65c9de3c","id":"1837240536978163456","weight":2,"content":"笑死"},{"progress":999079,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107195,"midHash":"72cd05e5","id":"1837239329177551104","weight":2,"content":"哇塞。。"},{"progress":336626,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107079,"midHash":"905ea8bd","id":"1837238362290360064","weight":2,"content":"哈哈哈哈哈哈"},{"progress":348820,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107072,"midHash":"7d421aad","id":"1837238296666238208","weight":2,"content":"？？"},{"progress":247527,"mode":1,"fontsize":25,"color":16777215,"ctime":1746107065,"midHash":"e59776a5","id":"1837238244162025472","weight":2,"content":"哈哈哈哈哈哈哈哈哈"},{"progress":711465,"mode":1,"fontsize":25,"color":15138834,"ctime":1746106618,"midHash":"858d0d4f","id":"1837234493011277824","weight":2,"content":"唉，碳排放"},{"progress":1127848,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106563,"midHash":"5da8e04c","id":"1837234034095292672","weight":2,"content":"建议开在酒店附近，要多，还要宣传"},{"progress":563141,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106522,"midHash":"a6cd1ea8","id":"1837233686236794624","weight":2,"content":"哈哈哈哈"},{"progress":1041732,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106419,"midHash":"d1ff4a89","id":"1837232823242112000","weight":2,"content":"生育不一定要结婚"},{"progress":1000446,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106388,"midHash":"5da8e04c","id":"1837232563731827968","weight":2,"content":"建议男人不结婚的资产归国家所有"},{"progress":84874,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106368,"midHash":"4c533871","id":"1837232398182744832","weight":2,"content":"离谱"},{"progress":188371,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106332,"midHash":"adf885b7","id":"1837232095597063424","weight":2,"content":"？"},{"progress":1068544,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106287,"midHash":"ada8a53","id":"1837231715912332032","weight":2,"content":"有期徒刑三年"},{"progress":186030,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106276,"midHash":"a6cd1ea8","id":"1837231620063924224","weight":2,"content":"哈哈哈哈哈"},{"progress":998098,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106204,"midHash":"ae29cf9","id":"1837231021368672256","weight":2,"content":"哈哈哈哈哈"},{"progress":250501,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106177,"midHash":"97e3dce1","id":"1837230796117893632","weight":2,"content":"妙啊"},{"progress":351075,"mode":1,"fontsize":25,"color":16777215,"ctime":1746106002,"midHash":"ff97c9c7","id":"1837229322449722112","weight":2,"content":"保护"},{"progress":250864,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105954,"midHash":"6d881ae","id":"1837228921532961536","weight":2,"content":"哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈"},{"progress":1109013,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105817,"midHash":"2bf7dfeb","id":"1837227772284577536","weight":2,"content":"1000哦~~~~没钱就别装大爷~~幼儿园一个月多少大声告诉我"},{"progress":1026145,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105805,"midHash":"341c26f8","id":"1837227669575089152","weight":2,"content":"适龄男多女少也是女权的锅？6 不是说因为男的不想结婚吗？怎么还抱怨上了"},{"progress":1111439,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105664,"midHash":"b0edd735","id":"1837226491923443200","weight":2,"content":"是1000块我都不好意思提。"},{"progress":1076415,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105628,"midHash":"ebd8f610","id":"1837226184270809600","weight":2,"content":"然后呢 生完怎么把孩子注销掉"},{"progress":1040693,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105608,"midHash":"10f4b5dc","id":"1837226021322049792","weight":2,"content":"美国确实15岁就可以结婚了，嘿嘿"},{"progress":71791,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105506,"midHash":"5651bda2","id":"1837225161213432320","weight":2,"content":"孤独摇滚不错的"},{"progress":210981,"mode":5,"fontsize":25,"color":16777215,"ctime":1746105312,"midHash":"6596d60","id":"1837223533814598400","weight":2,"content":"我就一句话：这些公司但凡有压榨员工的都不配这个奖"},{"progress":259088.00000000003,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105304,"midHash":"d6fb7bab","id":"1837223471404028160","weight":2,"content":"让你心里健康 不要想着要加班费 至于身体吧和单位有什么关系 是你自己的"},{"progress":179361,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105229,"midHash":"6596d60","id":"1837222842350187264","weight":2,"content":"遥遥领先"},{"progress":960316,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105190,"midHash":"66a7b450","id":"1837222516939445760","weight":2,"content":"小区3.1元，可能和水池水泵有关"},{"progress":1045584.0000000001,"mode":1,"fontsize":25,"color":16777215,"ctime":1746105023,"midHash":"6aa64054","id":"1837221110354466560","weight":2,"content":"消费！！"},{"progress":1125904,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104996,"midHash":"997a7812","id":"1837220884952835072","weight":2,"content":"上班顺便结个婚"},{"progress":1106613,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104471,"midHash":"b47fa94f","id":"1837216481134913280","weight":2,"content":"？？？？？"},{"progress":1023315,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104399,"midHash":"2bc6e21","id":"1837215879679608832","weight":2,"content":"女权功不可没，继续加油"},{"progress":1124360,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104331,"midHash":"8d4e2d90","id":"1837215305916040448","weight":2,"content":"我结个婚得花出去30w~~你给我1000有啥吸引力？"},{"progress":965575,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104322,"midHash":"2bc6e21","id":"1837215232607537152","weight":2,"content":"好事"},{"progress":997487,"mode":1,"fontsize":25,"color":16777215,"ctime":1746104164,"midHash":"a3e559b3","id":"1837213909783292672","weight":2,"content":"好阿"},{"progress":77929,"mode":1,"fontsize":25,"color":16777215,"ctime":1746103952,"midHash":"99c5084b","id":"1837212127732531456","weight":2,"content":"6"},{"progress":264750,"mode":1,"fontsize":25,"color":16777215,"ctime":1746103951,"midHash":"d2c96748","id":"1837212120987693056","weight":2,"content":"哈哈哈哈哈"},{"progress":991396,"mode":1,"fontsize":25,"color":16777215,"ctime":1746103895,"midHash":"f5754263","id":"1837211650848610816","weight":2,"content":"哈哈哈哈哈哈哈"},{"progress":186480,"mode":1,"fontsize":25,"color":16777215,"ctime":1746103817,"midHash":"15f695d9","id":"1837210992359348224","weight":2,"content":"啊？"},{"progress":513405,"mode":1,"fontsize":25,"color":16777215,"ctime":1746103785,"midHash":"3be50","id":"1837210723689251584","weight":2,"content":"哈哈哈哈"},{"progress":60005,"mode":1,"fontsize":25,"color":16777215,"ctime":1746103627,"midHash":"a37a3eaf","id":"1837209405041489408","weight":2,"content":"哈哈哈"},{"progress":1110054,"mode":1,"fontsize":25,"color":16777215,"ctime":1746103047,"midHash":"b6eea3ab","id":"1837204539305375232","weight":2,"content":"1500啊！你问问女方彩礼多少？"},{"progress":865069,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102832,"midHash":"f5ddaa34","id":"1837202734538438912","weight":2,"content":"电鸡"},{"progress":596030,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102773,"midHash":"64b3855","id":"1837202237899328512","weight":2,"content":"哈哈哈哈哈哈"},{"progress":842003,"mode":5,"fontsize":25,"color":16777215,"ctime":1746102687,"midHash":"b6eea3ab","id":"1837201519683528960","weight":2,"content":"这个确实比较旧的地铁图，最南端的21号线，延长线，环城线都不在"},{"progress":259629.00000000003,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102675,"midHash":"a9035fbb","id":"1837201415278861824","weight":2,"content":"哈哈哈哈哈哈哈"},{"progress":198253,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102638,"midHash":"a9035fbb","id":"1837201101016486144","weight":2,"content":"遥遥领先"},{"progress":12751,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102589,"midHash":"47fae893","id":"1837200695862958080","weight":2,"content":"+1"},{"progress":184667,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102541,"midHash":"1ec26e82","id":"1837200290735032320","weight":2,"content":"?"},{"progress":8355,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102517,"midHash":"a9035fbb","id":"1837200086623972864","weight":2,"content":"俺也一样"},{"progress":341698,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102401,"midHash":"f5ddaa34","id":"1837199116003229184","weight":1,"content":"马督工行为"},{"progress":330064,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102232,"midHash":"32b4a1c0","id":"1837197698101550592","weight":1,"content":"哈哈哈哈"},{"progress":1107864,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102122,"midHash":"cc22844a","id":"1837196773878355968","weight":1,"content":"？"},{"progress":1146517,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102072,"midHash":"a77a0e10","id":"1837196358743388416","weight":1,"content":"666"},{"progress":349379,"mode":1,"fontsize":25,"color":16777215,"ctime":1746102011,"midHash":"939e20a1","id":"1837195847213948416","weight":1,"content":"6"},{"progress":1069341,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101882,"midHash":"2e591721","id":"1837194767340295424","weight":1,"content":"做梦一样，养一个正常的不是留守儿童小孩的成本有多高是不知道吗"},{"progress":824264,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101787,"midHash":"11c7de38","id":"1837193968417665280","weight":1,"content":"高峰时候一堆私家车占用BRT，举报都举报不了"},{"progress":14891,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101779,"midHash":"5f094c08","id":"1837193897576109824","weight":1,"content":"+1"},{"progress":1052358,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101647,"midHash":"5d0267cb","id":"1837192794297714688","weight":1,"content":"笑了"},{"progress":993727,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101593,"midHash":"399e9277","id":"1837192336095433472","weight":1,"content":"好事"},{"progress":621616,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101547,"midHash":"a77a0e10","id":"1837191955890255616","weight":1,"content":"哈哈哈"},{"progress":1141386,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101445,"midHash":"67a58d2b","id":"1837191094178496256","weight":1,"content":"反对收单身税"},{"progress":340704,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101419,"midHash":"126ec15d","id":"1837190877802941440","weight":1,"content":"HHH"},{"progress":335440,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101386,"midHash":"8d10b8f7","id":"1837190602010849536","weight":1,"content":"哈哈哈哈哈"},{"progress":352349,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101383,"midHash":"80208524","id":"1837190578665275392","weight":1,"content":"哈哈哈哈哈"},{"progress":1089885,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101292,"midHash":"fe49d909","id":"1837189814294826496","weight":1,"content":"奇怪"},{"progress":1082868,"mode":1,"fontsize":25,"color":16777215,"ctime":1746101183,"midHash":"49266f84","id":"1837188902571102464","weight":1,"content":"哈哈哈哈"},{"progress":181766,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100984,"midHash":"e531aca","id":"1837187230587287808","weight":1,"content":"遥遥领先"},{"progress":1031762,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100964,"midHash":"dfc84fef","id":"1837187062412353280","weight":1,"content":"是香港15岁能领结婚证吗"},{"progress":485545,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100929,"midHash":"9a59320b","id":"1837186766042606080","weight":1,"content":"哈哈哈"},{"progress":671036,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100771,"midHash":"710b19c5","id":"1837185443075583744","weight":1,"content":"哈哈哈，我的上市公司是二股东"},{"progress":186283,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100747,"midHash":"478147d5","id":"1837185239743656960","weight":1,"content":"哈哈哈哈哈"},{"progress":353283,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100673,"midHash":"40f7aaed","id":"1837184619196939008","weight":1,"content":"？"},{"progress":844375,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100664,"midHash":"b94afbeb","id":"1837184548254500352","weight":1,"content":"广州地铁才这么点？"},{"progress":526214,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100659,"midHash":"2351aae0","id":"1837184501789814016","weight":1,"content":"遥遥领先"},{"progress":334114,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100630,"midHash":"2d5df3b7","id":"1837184259895890688","weight":1,"content":"？？？"},{"progress":346331,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100622,"midHash":"6b48498","id":"1837184190521901824","weight":1,"content":"？"},{"progress":256933,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100548,"midHash":"6b48498","id":"1837183571232785920","weight":1,"content":"哈哈哈哈"},{"progress":258963.00000000003,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100393,"midHash":"26cbfca5","id":"1837182270445316864","weight":1,"content":"哈哈哈哈哈哈哈"},{"progress":185654,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100317,"midHash":"2351aae0","id":"1837181634823629312","weight":1,"content":"笑死"},{"progress":248241,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100246,"midHash":"e1660278","id":"1837181042327317760","weight":1,"content":"自愿加班不算工伤工亡第一案!"},{"progress":648170,"mode":1,"fontsize":25,"color":16777215,"ctime":1746100182,"midHash":"7fea717d","id":"1837180506530836224","weight":1,"content":"6666"},{"progress":606017,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099893,"midHash":"1bf1fd32","id":"1837178077181551872","weight":1,"content":"哈哈哈"},{"progress":1109183,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099546,"midHash":"d0a5c6df","id":"1837175163498937088","weight":1,"content":"女+年龄就是奔着催生去的吧，结了天天打电话问"},{"progress":64769.99999999999,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099523,"midHash":"99880f3","id":"1837174970712260352","weight":1,"content":"哈哈哈哈"},{"progress":1101418,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099493,"midHash":"d0a5c6df","id":"1837174722434289920","weight":1,"content":"为什么女25？"},{"progress":185753,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099489,"midHash":"99bc886d","id":"1837174688971975168","weight":1,"content":"6"},{"progress":1108035,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099457,"midHash":"876ce2b0","id":"1837174416937609728","weight":1,"content":"？"},{"progress":794020,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099450,"midHash":"97f0f6cc","id":"1837174361992592896","weight":1,"content":"--"},{"progress":187860,"mode":1,"fontsize":25,"color":16777215,"ctime":1746099052,"midHash":"6bcbb993","id":"1837171024501180928","weight":1,"content":"抄袭小子"},{"progress":1068447,"mode":1,"fontsize":25,"color":16646914,"ctime":1746098996,"midHash":"6e77814","id":"1837170553556006400","weight":1,"content":"几万块有的屁用呀"},{"progress":1043570.9999999999,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098972,"midHash":"117789c8","id":"1837170354612092160","weight":1,"content":"收取单身税 不结婚补贴结婚的"},{"progress":193584,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098700,"midHash":"d9bcfad9","id":"1837168070310142976","weight":1,"content":"哈哈哈哈哈"},{"progress":1136437,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098574,"midHash":"eddc869","id":"1837167011181044224","weight":1,"content":"抽象"},{"progress":1101722,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098515,"midHash":"976a4db8","id":"1837166514961490176","weight":1,"content":"？"},{"progress":1109762,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098393,"midHash":"59581d72","id":"1837165493799406336","weight":1,"content":"啊？？"},{"progress":172871,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098359,"midHash":"ab07a4eb","id":"1837165211631601152","weight":1,"content":"合理的"},{"progress":1073293,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098246,"midHash":"fca80eeb","id":"1837164264893980672","weight":1,"content":"四万也就够多摆几桌，不够开支，十万也就一个孩子上幼儿园用，相当于跑车五元优惠券"},{"progress":188670,"mode":1,"fontsize":25,"color":16777215,"ctime":1746098187,"midHash":"e0186504","id":"1837163770896864768","weight":1,"content":"确实好笑"},{"progress":206595,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097989,"midHash":"d07c1e70","id":"1837162104869289984","weight":1,"content":"雷军"},{"progress":12761,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097948,"midHash":"be402e0","id":"1837161766028165888","weight":1,"content":"来了来了"},{"progress":186752,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097667,"midHash":"910d3ad6","id":"1837159402965388544","weight":1,"content":"笑死"},{"progress":25617,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097510,"midHash":"9253a4f4","id":"1837158087505550080","weight":1,"content":"美团电影还是爆米花一点"},{"progress":343613,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097405,"midHash":"3096f296","id":"1837157210166300928","weight":1,"content":"？"},{"progress":974661,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097254,"midHash":"1a52ddbb","id":"1837155937824156928","weight":1,"content":"好！"},{"progress":1084932,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097183,"midHash":"624b74df","id":"1837155343265365504","weight":1,"content":"这是好事啊"},{"progress":10744,"mode":1,"fontsize":25,"color":16777215,"ctime":1746097075,"midHash":"69f40f01","id":"1837154438754887680","weight":1,"content":"+1"},{"progress":10480,"mode":1,"fontsize":25,"color":16777215,"ctime":1746096995,"midHash":"a4cff349","id":"1837153771919095040","weight":1,"content":"控告马逆"}];
+            const iframe = document.createElement('iframe');
+            iframe.id = 'danmaku-stat-iframe';
+            iframe.style.position = 'fixed';
+            iframe.style.top = '3%';
+            iframe.style.left = '4%';
+            iframe.style.height = '90%';
+            iframe.style.width = '90%';
+            iframe.style.border = '0';
+            iframe.style.backgroundColor = '#fff';
+            iframe.style.padding = '20px';
+            iframe.style.overflow = 'hidden';
+            iframe.style.borderRadius = '8px';
+            iframe.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
+            iframe.onload = () => initIframeApp(iframe, videoData, danmukuData);
+            document.body.appendChild(iframe);
+        </script>
+        </body>
+        </html>
+        
