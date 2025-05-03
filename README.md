@@ -11,6 +11,7 @@
 7. 右上方“载入实时弹幕xx条”的链接点开为弹幕xml文件，ctrl+s下载。
 8. 可下载视频封面、up头像等。
 9. 可转为[长条图片](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example02.png)。
+10. 可下载html文件至本地。先新标签页打开，再点击保存。
 
 ![图片01](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example01.png)
 
@@ -28,6 +29,7 @@
   - [xml实时弹幕](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/danmaku/danmaku_xml.md)
   - [视频基本信息](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/video/info.md)
 - [BiliBili_crc2mid](https://github.com/shafferjohn/bilibili-search)
+- [iconfont](https://www.iconfont.cn/)
 
 ---
 ### 更新
@@ -42,3 +44,7 @@
 
 **版本1.3**
 - 增加转为图片功能
+
+**版本1.4**
+- 增加新标签页打开功能
+- 增加保存html至本地功能
