@@ -3,7 +3,7 @@
 首先把最外层的函数收起来，总共有这些函数：
 ```js
 initIframeApp;  //渲染页面
-fetchResources; //获取数据
+BiliDanmakuUtils; //获取数据
 insertButton;   //插入初始按钮
 openPanel; //打开iframe弹幕统计面板
 openPanelInNewTab;  //打开新标签页弹幕统计面板
@@ -26,7 +26,7 @@ savePanel;  //保存弹幕统计面板
 
 1. **获取数据：**
 
-调用`fetchResources`获取数据
+调用`BiliDanmakuUtils`获取数据
 ```js
 const { bvid, p } = parseBiliUrl(location.href);
 const videoData = await getVideoData(bvid, p);
@@ -42,11 +42,6 @@ const danmakuData = await getDanmakuData(videoData);
 > 
 > 只有bvid就能获取videoData.cid，但是如果是分p视频，每p视频都有自己的cid，在`videoData.pages`数组里面，所以要知道p以确定数组索引。
 >
-> `getVideoData()`改造了`videoData`，如果p有值，那么会记录进`videoData`，以便后续调用。
-> ```js
-> videoData.page_index = p - 1;
-> videoData.page_cur = videoData.pages[p - 1];
-> ```
 > `getDanmakuData` 获取了xml弹幕数据后会调用`parseDanmakuXml`解析为json对象，参考[xml格式结构](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/danmaku/danmaku_xml.md#xml%E6%A0%BC%E5%BC%8F%E7%BB%93%E6%9E%84)
 
 1. **渲染页面：**
@@ -54,6 +49,11 @@ const danmakuData = await getDanmakuData(videoData);
 调用`initIframeApp`渲染页面
 
 iframe创建后里面是空的html，`initIframeApp`首先把引用的css和js塞进去，然后创建一个div作为Vue的挂载点，然后挂载Vue，然后`app setup()`里面没什么好讲的了。细节复制过去问chatGPT就行。
+
+> `onMounted`挂载时改造了`videoData`，如果p有值，那么会记录进`videoData`，以便后续调用。并且如果是分p视频，那么duration记录的是总时长，`onMounted`会把pages里面的duration覆盖原本的。
+> ```js
+> videoData.page_cur = videoData.pages[p - 1];
+> ```
 
 > 其中`biliCrc2Mid`是从[bilibili-search](https://github.com/shafferjohn/bilibili-search/blob/master/crc32.js)复制来的，速度很快，比[常规的暴力搜索](https://github.com/SocialSisterYi/bilibili-API-collect/issues/698#issuecomment-1577172809)快很多。
 
