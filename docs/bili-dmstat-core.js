@@ -7,7 +7,7 @@ export class BiliDanmakuUtils {
         this.danmakuData = null;
         this.danmakuXmlText = null;
         this.logStyle = {
-            tag: 'Danmaku Utils',
+            tag: 'Danmaku Statistic',
             style: 'background: #00a2d8; color: white; padding: 2px 6px; border-radius: 3px;',
             errorStyle: 'background: #ff4d4f; color: white; padding: 2px 6px; border-radius: 3px;'
         };
@@ -111,7 +111,6 @@ export class BiliDanmakuUtils {
     }
 
 }
-
 export async function initIframeApp(iframe, dataParam, panelInfoParam) {
     const doc = iframe.contentDocument;
     const win = iframe.contentWindow;
