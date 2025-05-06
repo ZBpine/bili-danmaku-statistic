@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.4.8
+// @version      1.5.0
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -63,14 +63,16 @@
                 const loading = ref(true);
                 const isExpandedUserChart = ref(false);
                 const panelInfo = ref(panelInfoParam);
-                let manager = null;
-                let charts = {
+                const visibleCharts = ref(['user', 'wordcloud', 'density', 'date', 'hour']);
+                const chartHover = ref(null);
+                const charts = {
                     user: null,
                     wordcloud: null,
                     density: null,
                     date: null,
                     hour: null
                 };
+                let manager = null;
 
                 class DanmakuManager {
                     constructor(danmakuList) {
@@ -290,7 +292,8 @@
                         // 拼接两个 canvas（上下排列）
                         ctx.drawImage(titleImg, titleX, 0);
                         ctx.drawImage(tableCanvas, tableX, titleImg.height);
-                        ctx.drawImage(chartCanvas, chartX, titleImg.height + tableCanvas.height);
+                        if (chartCanvas.height > 0)
+                            ctx.drawImage(chartCanvas, chartX, titleImg.height + tableCanvas.height);
 
                         // 输出图片
                         finalCanvas.toBlob(blob => {
@@ -372,25 +375,99 @@
                     });
                 }
 
-                async function updateDispDanmakus(data, text, ifchart) {
-                    loading.value = true;
-                    await nextTick();
-                    await new Promise(resolve => setTimeout(resolve, 10)); //等待v-loading渲染
-                    try {
-                        displayedDanmakus.value = data;
-                        currentSubFilt.value = text;
-                        if (ifchart) {
-                            const stats = manager.getStats();
-                            updateChart(stats);
-                            danmakuCount.value = { user: stats.length, dm: displayedDanmakus.value.length }
-                        }
-                        await nextTick();
-                    } catch (err) {
-                        console.error(err);
-                        ELEMENT_PLUS.ElMessage.error('数据显示错误');
-                    } finally {
-                        loading.value = false;
+                function moveChartUp(chart) {
+                    const idx = visibleCharts.value.indexOf(chart);
+                    if (idx > 0) {
+                        visibleCharts.value.splice(idx, 1);
+                        visibleCharts.value.splice(idx - 1, 0, chart);
                     }
+                }
+                function moveChartDown(chart) {
+                    const idx = visibleCharts.value.indexOf(chart);
+                    if (idx < visibleCharts.value.length - 1) {
+                        visibleCharts.value.splice(idx, 1);
+                        visibleCharts.value.splice(idx + 1, 0, chart);
+                    }
+                }
+                function moveChartOut(chart) {
+                    const idx = visibleCharts.value.indexOf(chart);
+                    if (idx !== -1) {
+                        visibleCharts.value.splice(idx, 1);
+                        // 销毁 ECharts 实例
+                        const inst = charts[chart];
+                        if (inst && inst.dispose) {
+                            inst.dispose();
+                            charts[chart] = null;
+                        }
+                    }
+                }
+
+                function renderUserChart(stats) {
+                    const el = doc.getElementById('chart-user');
+                    if (!el) return;
+                    if (!charts.user) {
+                        el.style.height = isExpandedUserChart.value ? '100%' : '50%';
+                        charts.user = ECHARTS.init(el);
+                        charts.user.on('click', async (params) => {
+                            const selected = params.name;
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => d.midHash === selected),
+                                { user: selected }
+                            );
+                        });
+                        // 点击标题切换展开状态
+                        charts.user.getZr().on('click', function (params) {
+                            if (params.offsetY >= 0 && params.offsetY <= 40) {
+                                isExpandedUserChart.value = !isExpandedUserChart.value;
+                                if (charts.user) {
+                                    charts.user.dispose();
+                                    charts.user = null;
+                                }
+                                renderUserChart(stats); // 重新绘制
+                            }
+                        });
+                    }
+                    const userNames = stats.map(item => item.user);
+                    const counts = stats.map(item => item.count);
+                    const maxCount = Math.max(...counts);
+
+                    const sc = isExpandedUserChart.value ? 20 : 8;
+
+                    charts.user.setOption({
+                        tooltip: {},
+                        title: { text: '用户弹幕统计' },
+                        grid: { left: 100 },
+                        xAxis: {
+                            type: 'value',
+                            min: 0,
+                            max: Math.ceil(maxCount * 1.1), // 横轴最大值略大一点
+                            scale: false
+                        },
+                        yAxis: {
+                            type: 'category',
+                            data: userNames,
+                            inverse: true
+                        },
+                        dataZoom: [
+                            {
+                                type: 'slider',
+                                yAxisIndex: 0,
+                                startValue: 0,
+                                endValue: userNames.length >= sc ? sc - 1 : userNames.length,
+                                width: 20
+                            }
+                        ],
+                        series: [{
+                            type: 'bar',
+                            data: counts,
+                            label: {
+                                show: true,
+                                position: 'right',  // 在条形右边显示
+                                formatter: '{c}',   // 显示数据本身
+                                fontSize: 12
+                            }
+                        }]
+                    });
                 }
                 function renderWordCloud(data) {
                     const el = doc.getElementById('chart-wordcloud');
@@ -599,87 +676,21 @@
                         series: [{ type: 'bar', data: hours }]
                     });
                 }
-                function updateChart(stats) {
-                    const chartEl = doc.getElementById('chart-user');
-                    if (!chartEl) return setTimeout(() => updateChart(stats), 100);
-                    chartEl.style.height = isExpandedUserChart.value ? '100%' : '50%';
-
-                    if (!charts.user) {
-                        charts.user = ECHARTS.init(chartEl);
-                        charts.user.on('click', (params) => {
-                            const selected = params.name;
-                            displayedDanmakus.value = manager.filtered.filter(d => d.midHash === selected);
-                            currentSubFilt.value = { user: selected };
-                        });
-                        // 点击标题切换展开状态
-                        charts.user.getZr().on('click', function (params) {
-                            if (params.offsetY >= 0 && params.offsetY <= 40) {
-                                isExpandedUserChart.value = !isExpandedUserChart.value;
-                                if (charts.user) {
-                                    charts.user.dispose();
-                                    charts.user = null;
-                                }
-                                updateChart(stats); // 重新绘制
-                            }
-                        });
-                    }
-                    const userNames = stats.map(item => item.user);
-                    const counts = stats.map(item => item.count);
-                    const maxCount = Math.max(...counts);
-
-                    const sc = isExpandedUserChart.value ? 20 : 8;
-
-                    charts.user.setOption({
-                        tooltip: {},
-                        title: { text: '用户弹幕统计' },
-                        grid: { left: 100 },
-                        xAxis: {
-                            type: 'value',
-                            min: 0,
-                            max: Math.ceil(maxCount * 1.1), // 横轴最大值略大一点
-                            scale: false
-                        },
-                        yAxis: {
-                            type: 'category',
-                            data: userNames,
-                            inverse: true
-                        },
-                        dataZoom: [
-                            {
-                                type: 'slider',
-                                yAxisIndex: 0,
-                                startValue: 0,
-                                endValue: userNames.length >= sc ? sc - 1 : userNames.length,
-                                width: 20
-                            }
-                        ],
-                        series: [{
-                            type: 'bar',
-                            data: counts,
-                            label: {
-                                show: true,
-                                position: 'right',  // 在条形右边显示
-                                formatter: '{c}',   // 显示数据本身
-                                fontSize: 12
-                            }
-                        }]
-                    });
+                function updateChart() {
+                    const stats = manager.getStats();
+                    danmakuCount.value = { user: stats.length, dm: displayedDanmakus.value.length };
+                    renderUserChart(stats);
                     renderDensityChart(manager.filtered);
                     renderWordCloud(manager.filtered);
                     renderDateChart(manager.filtered);
                     renderHourChart(manager.filtered);
                 }
 
-                async function clearSubFilter() {
-                    await updateDispDanmakus(manager.filtered, {});
-                }
                 function handleRowClick(row) {
                     if (!charts.user) return;
 
-                    const userMid = row.midHash;
-                    const option = charts.user.getOption();
-
                     let el = doc.getElementById('wrapper-chart');
+                    if (!el) return;
                     while (el && el !== doc.body) {
                         //寻找可以滚动的父级元素
                         const overflowY = getComputedStyle(el).overflowY;
@@ -690,6 +701,9 @@
                         }
                         el = el.parentElement;
                     }
+
+                    const userMid = row.midHash;
+                    const option = charts.user.getOption();
 
                     const sc = isExpandedUserChart.value ? 20 : 8;
                     const scup = isExpandedUserChart.value ? 9 : 3;
@@ -719,6 +733,27 @@
                             }]
                         });
                     }
+                }
+                async function updateDispDanmakus(data, text, ifchart) {
+                    loading.value = true;
+                    await nextTick();
+                    await new Promise(resolve => setTimeout(resolve, 10)); //等待v-loading渲染
+                    try {
+                        displayedDanmakus.value = data;
+                        currentSubFilt.value = text;
+                        if (ifchart) {
+                            updateChart();
+                        }
+                        await nextTick();
+                    } catch (err) {
+                        console.error(err);
+                        ELEMENT_PLUS.ElMessage.error('数据显示错误');
+                    } finally {
+                        loading.value = false;
+                    }
+                }
+                async function clearSubFilter() {
+                    await updateDispDanmakus(manager.filtered, {});
                 }
 
                 async function applyFilter() {
@@ -778,6 +813,11 @@
                     loading,
                     isExpandedUserChart,
                     panelInfo,
+                    visibleCharts,
+                    chartHover,
+                    moveChartUp,
+                    moveChartDown,
+                    moveChartOut,
                     midHashOnClick,
                     handleRowClick,
                     clearSubFilter,
@@ -1000,11 +1040,49 @@
         </el-header>
         <el-main style="overflow-y: auto;">
             <div id="wrapper-chart" style="min-width: 400px;">
-                <div id="chart-user" style="height: 50%; margin-bottom: 10px;"></div>
-                <div id="chart-wordcloud" style="height: 50%; margin-bottom: 10px;"></div>
-                <div id="chart-density" style="height: 50%; margin-bottom: 10px;"></div>
-                <div id="chart-date" style="height: 50%; margin-bottom: 10px;"></div>
-                <div id="chart-hour" style="height: 50%;"></div>
+                <div v-for="(chart, index) in visibleCharts" :key="chart" :style="{
+                  position: 'relative',
+                  marginBottom: index < visibleCharts.length - 1 ? '10px' : '0'
+                }" @mouseenter="chartHover = chart" @mouseleave="chartHover = null">
+                    <!-- 控制按钮 -->
+                    <div v-if="chartHover === chart" :style="{
+                      position: 'absolute',
+                      top: '4px',
+                      right: '4px',
+                      display: 'flex',
+                      gap: '3px',
+                      opacity: 1,
+                      zIndex: 10,
+                      transition: 'opacity 0.2s'
+                    }">
+                        <el-button size="small" circle @click="moveChartUp(chart)" :style="{
+                      backgroundColor: 'rgba(128,128,128,0.4)',
+                      color: 'white',
+                      fontWeight: 'bold'
+                    }">
+                            ↑
+                        </el-button>
+                        <span></span>
+                        <el-button size="small" circle @click="moveChartDown(chart)" :style="{
+                      backgroundColor: 'rgba(128,128,128,0.4)',
+                      color: 'white',
+                      fontWeight: 'bold'
+                    }">
+                            ↓
+                        </el-button>
+                        <span></span>
+                        <el-button size="small" circle @click="moveChartOut(chart)" :style="{
+                      backgroundColor: 'rgba(128,128,128,0.4)',
+                      color: 'white',
+                      fontWeight: 'bold'
+                    }">
+                            ⨉
+                        </el-button>
+
+                    </div>
+                    <!-- 图表容器 -->
+                    <div :id="'chart-' + chart" style="height: 50%;"></div>
+                </div>
             </div>
         </el-main>
     </el-container>
