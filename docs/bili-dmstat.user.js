@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.5.1
+// @version      1.5.2
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -61,6 +61,7 @@
                 const danmakuCount = ref({ user: 0, dm: 0 });
                 const videoData = ref(dataParam.videoData);
                 const isTableVisible = ref(true);
+                const isTableAutoH = ref(false);
                 const loading = ref(true);
                 const isExpandedUserChart = ref(false);
                 const panelInfo = ref(panelInfoParam);
@@ -817,6 +818,7 @@
                     loading,
                     isExpandedUserChart,
                     isTableVisible,
+                    isTableAutoH,
                     panelInfo,
                     visibleCharts,
                     chartHover,
@@ -963,7 +965,7 @@
                 </p>
             </div>
 
-            <div id="wrapper-table" style="height: 100%; display: flex; flex-direction: column;">
+            <div id="wrapper-table" :style="isTableAutoH ? '' : 'height: 100%; display: flex; flex-direction: column;'">
                 <div @click="isTableVisible = !isTableVisible" style="
                   cursor: pointer;
                   display: flex;
@@ -978,13 +980,20 @@
                     <span style="flex: 1; font-size: 14px; color: #333;">
                         弹幕列表
                     </span>
+                    <el-popover placement="bottom" width="160" trigger="click">
+                        <template v-slot:reference>
+                            <el-button text style="margin-right: 10px;" circle @click.stop />
+                        </template>
+                        <div style="padding: 4px 8px;">
+                            <el-switch v-model="isTableAutoH" active-text="自动高度" inactive-text="有限高度" />
+                        </div>
+                    </el-popover>
                     <span style="font-size: 12px; color: #666;">
                         {{ isTableVisible ? '▲ 收起' : '▼ 展开' }}
                     </span>
                 </div>
                 <el-collapse-transition>
-                    <el-table :data="displayedDanmakus" v-show="isTableVisible" style="flex: 1;" height="0" border
-                        @row-click="handleRowClick">
+                    <el-table :data="displayedDanmakus" v-show="isTableVisible" @row-click="handleRowClick" border>
                         <el-table-column prop="progress" label="时间" width="80">
                             <template #default="{ row }">{{ formatProgress(row.progress) }}</template>
                         </el-table-column>
