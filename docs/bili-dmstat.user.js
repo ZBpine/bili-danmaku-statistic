@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.5.0
+// @version      1.5.1
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -60,6 +60,7 @@
                 const currentSubFilt = ref({});
                 const danmakuCount = ref({ user: 0, dm: 0 });
                 const videoData = ref(dataParam.videoData);
+                const isTableVisible = ref(true);
                 const loading = ref(true);
                 const isExpandedUserChart = ref(false);
                 const panelInfo = ref(panelInfoParam);
@@ -219,13 +220,9 @@
 
                 async function shareImage() {
                     const html2canvas = win.html2canvas;
-                    if (!html2canvas) {
-                        ELEMENT_PLUS.ElMessage.error('html2canvas 加载失败');
-                        return;
-                    }
                     const domtoimage = win.domtoimage;
-                    if (!domtoimage) {
-                        ELEMENT_PLUS.ElMessage.error('dom-to-image-more 加载失败');
+                    if (!html2canvas || !domtoimage) {
+                        ELEMENT_PLUS.ElMessage.error('截图库加载失败');
                         return;
                     }
 
@@ -252,24 +249,31 @@
                         const scale = window.devicePixelRatio;
                         //title使用dom-to-image-more截图，table和chart使用html2canvas截图
                         const titleBlob = await domtoimage.toBlob(titleWrapper, {
-                            style: {
-                                transform: `scale(${scale})`,
-                                transformOrigin: 'top left'
-                            },
+                            style: { transform: `scale(${scale})`, transformOrigin: 'top left' },
                             width: titleWrapper.offsetWidth * scale,
                             height: titleWrapper.offsetHeight * scale
                         });
                         const titleImg = await loadImage(titleBlob);
 
-                        const [titleCanvas, tableCanvas, chartCanvas] = await Promise.all([
-                            //foreignObjectRendering开启则Echart无法显示，关闭则el-tag没有文字。
-                            html2canvas(titleWrapper, {
-                                useCORS: true, backgroundColor: '#fff', scale: scale,
-                                foreignObjectRendering: true
-                            }),
-                            html2canvas(tableWrapper, { useCORS: true, backgroundColor: '#fff', scale: scale }),
-                            html2canvas(chartWrapper, { useCORS: true, backgroundColor: '#fff', scale: scale })
-                        ]);
+                        //foreignObjectRendering开启则Echart无法显示，关闭则el-tag没有文字。
+                        // const [titleCanvas, tableCanvas, chartCanvas] = await Promise.all([
+                        //     html2canvas(titleWrapper, {
+                        //         useCORS: true, backgroundColor: '#fff', scale: scale,
+                        //         foreignObjectRendering: true
+                        //     }),
+                        //     html2canvas(tableWrapper, { useCORS: true, backgroundColor: '#fff', scale: scale }),
+                        //     html2canvas(chartWrapper, { useCORS: true, backgroundColor: '#fff', scale: scale })
+                        // ]);
+                        let tableCanvas = null;
+                        let chartCanvas = null;
+                        if (isTableVisible.value) {
+                            tableCanvas = await html2canvas(tableWrapper, { useCORS: true, backgroundColor: '#fff', scale });
+                        } else {
+                            tableCanvas = document.createElement('canvas');
+                            tableCanvas.width = 0;
+                            tableCanvas.height = 0;
+                        }
+                        chartCanvas = await html2canvas(chartWrapper, { useCORS: true, backgroundColor: '#fff', scale });
 
                         // 计算总大小
                         const totalWidth = Math.max(titleImg.width, tableCanvas.width, chartCanvas.width) * 1.1;
@@ -281,20 +285,19 @@
                         finalCanvas.height = totalHeight;
                         const ctx = finalCanvas.getContext('2d');
 
-                        // 计算水平居中位置
-                        const titleX = (totalWidth - titleImg.width) / 2;
-                        const tableX = (totalWidth - tableCanvas.width) / 2;
-                        const chartX = (totalWidth - chartCanvas.width) / 2;
-
                         // 绘制
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(0, 0, totalWidth, totalHeight);
-                        // 拼接两个 canvas（上下排列）
-                        ctx.drawImage(titleImg, titleX, 0);
-                        ctx.drawImage(tableCanvas, tableX, titleImg.height);
-                        if (chartCanvas.height > 0)
-                            ctx.drawImage(chartCanvas, chartX, titleImg.height + tableCanvas.height);
-
+                        let y = 0;
+                        ctx.drawImage(titleImg, (totalWidth - titleImg.width) / 2, y);
+                        y += titleImg.height;
+                        if (tableCanvas.height > 0) {
+                            ctx.drawImage(tableCanvas, (totalWidth - tableCanvas.width) / 2, y);
+                            y += tableCanvas.height;
+                        }
+                        if (chartCanvas.height > 0) {
+                            ctx.drawImage(chartCanvas, (totalWidth - chartCanvas.width) / 2, y);
+                        }
                         // 输出图片
                         finalCanvas.toBlob(blob => {
                             const blobUrl = URL.createObjectURL(blob);
@@ -311,7 +314,7 @@
                                 cancelButtonText: '关闭',
                             }).then(() => {
                                 const link = doc.createElement('a');
-                                link.download = 'bilibili_danmaku_statistics.png';
+                                link.download = `${videoData.value.bvid}_danmaku_statistics.png`;
                                 link.href = blobUrl;
                                 link.click();
                                 URL.revokeObjectURL(blobUrl); // 可选：释放内存
@@ -328,6 +331,7 @@
                         loading.value = false;
                     }
                 }
+
                 function midHashOnClick() {
                     if (!currentSubFilt.value.user) return;
                     ELEMENT_PLUS.ElMessageBox.confirm(
@@ -812,6 +816,7 @@
                     currentSubFilt,
                     loading,
                     isExpandedUserChart,
+                    isTableVisible,
                     panelInfo,
                     visibleCharts,
                     chartHover,
@@ -831,7 +836,6 @@
 <el-container style="height: 100%;" v-loading="loading">
     <!-- 左边 -->
     <el-aside width="50%" style="overflow-y: auto;">
-        <!-- 上半部：标题区域 -->
         <div style="min-width: 400px;">
             <div id="wrapper-title" style="text-align: left;">
                 <h3>{{ videoData.title || '加载中...' }}
@@ -959,29 +963,48 @@
                 </p>
             </div>
 
-            <!-- 下半部：弹幕表格 -->
             <div id="wrapper-table" style="height: 100%; display: flex; flex-direction: column;">
-                <el-table :data="displayedDanmakus" style="flex: 1;" height="0" border @row-click="handleRowClick">
-                    <el-table-column prop="progress" label="时间" width="80">
-                        <template #default="{ row }">{{ formatProgress(row.progress) }}</template>
-                    </el-table-column>
-                    <el-table-column prop="content" label="弹幕内容">
-                        <template #default="{ row }">
-                            <el-tooltip class="item" placement="top-start"
-                                :content="'发送用户: ' + row.midHash + '\\n屏蔽等级: ' + row.weight">
-                                <span>{{ row.content }}</span>
-                            </el-tooltip>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="ctime" label="发送时间" width="160">
-                        <template #default="{ row }">{{ formatCtime(row.ctime) }}</template>
-                    </el-table-column>
-                </el-table>
+                <div @click="isTableVisible = !isTableVisible" style="
+                  cursor: pointer;
+                  display: flex;
+                  align-items: center;
+                  padding: 6px 10px;
+                  border-top-left-radius: 6px;
+                  border-top-right-radius: 6px;
+                  background-color: #fafafa;
+                  transition: background-color 0.2s ease;
+                  user-select: none;
+                ">
+                    <span style="flex: 1; font-size: 14px; color: #333;">
+                        弹幕列表
+                    </span>
+                    <span style="font-size: 12px; color: #666;">
+                        {{ isTableVisible ? '▲ 收起' : '▼ 展开' }}
+                    </span>
+                </div>
+                <el-collapse-transition>
+                    <el-table :data="displayedDanmakus" v-show="isTableVisible" style="flex: 1;" height="0" border
+                        @row-click="handleRowClick">
+                        <el-table-column prop="progress" label="时间" width="80">
+                            <template #default="{ row }">{{ formatProgress(row.progress) }}</template>
+                        </el-table-column>
+                        <el-table-column prop="content" label="弹幕内容">
+                            <template #default="{ row }">
+                                <el-tooltip class="item" placement="top-start"
+                                    :content="'发送用户: ' + row.midHash + '\\n屏蔽等级: ' + row.weight">
+                                    <span>{{ row.content }}</span>
+                                </el-tooltip>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="ctime" label="发送时间" width="160">
+                            <template #default="{ row }">{{ formatCtime(row.ctime) }}</template>
+                        </el-table-column>
+                    </el-table>
+                </el-collapse-transition>
             </div>
         </div>
     </el-aside>
 
-    <!-- 右边 -->
     <el-container>
         <el-header style="
         height: auto; 
@@ -1060,7 +1083,7 @@
                       color: 'white',
                       fontWeight: 'bold'
                     }">
-                            ↑
+                            ▲
                         </el-button>
                         <span></span>
                         <el-button size="small" circle @click="moveChartDown(chart)" :style="{
@@ -1068,7 +1091,7 @@
                       color: 'white',
                       fontWeight: 'bold'
                     }">
-                            ↓
+                            ▼
                         </el-button>
                         <span></span>
                         <el-button size="small" circle @click="moveChartOut(chart)" :style="{
