@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.5.2
+// @version      1.6.0
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/list/watchlater*
+// @match        https://space.bilibili.com/*
 // @grant        none
 // @license      MIT
 // @run-at       document-end
@@ -15,7 +16,7 @@
 (function () {
     'use strict';
 
-    // iframe里初始化Vue应用
+    // iframe里初始化统计面板应用
     async function initIframeApp(iframe, dataParam, panelInfoParam) {
         const doc = iframe.contentDocument;
         const win = iframe.contentWindow;
@@ -53,6 +54,7 @@
         const ECHARTS = win.echarts;
         const app = createApp({
             setup() {
+                const converter = new BiliMidHashConverter();
                 const displayedDanmakus = ref([]);
                 const filterText = ref('^(哈|呵|h|ha|HA|H+|233+)+$');
                 const originDanmakuCount = ref(0);
@@ -98,105 +100,6 @@
                         return Object.entries(countMap)
                             .map(([user, count]) => ({ user, count }))
                             .sort((a, b) => b.count - a.count);
-                    }
-                }
-                const biliCrc2Mid = function () {
-                    /*
-                    函数来源
-                    https://github.com/shafferjohn/bilibili-search/blob/master/crc32.js
-                    */
-                    const CRCPOLYNOMIAL = 0xEDB88320;
-                    var startTime = new Date().getTime(),
-                        crctable = new Array(256),
-                        create_table = function () {
-                            var crcreg,
-                                i, j;
-                            for (i = 0; i < 256; ++i) {
-                                crcreg = i;
-                                for (j = 0; j < 8; ++j) {
-                                    if ((crcreg & 1) != 0) {
-                                        crcreg = CRCPOLYNOMIAL ^ (crcreg >>> 1);
-                                    }
-                                    else {
-                                        crcreg >>>= 1;
-                                    }
-                                }
-                                crctable[i] = crcreg;
-                            }
-                        },
-                        crc32 = function (input) {
-                            if (typeof (input) != 'string')
-                                input = input.toString();
-                            var crcstart = 0xFFFFFFFF, len = input.length, index;
-                            for (var i = 0; i < len; ++i) {
-                                index = (crcstart ^ input.charCodeAt(i)) & 0xff;
-                                crcstart = (crcstart >>> 8) ^ crctable[index];
-                            }
-                            return crcstart;
-                        },
-                        crc32lastindex = function (input) {
-                            if (typeof (input) != 'string')
-                                input = input.toString();
-                            var crcstart = 0xFFFFFFFF, len = input.length, index;
-                            for (var i = 0; i < len; ++i) {
-                                index = (crcstart ^ input.charCodeAt(i)) & 0xff;
-                                crcstart = (crcstart >>> 8) ^ crctable[index];
-                            }
-                            return index;
-                        },
-                        getcrcindex = function (t) {
-                            //if(t>0)
-                            //t-=256;
-                            for (var i = 0; i < 256; i++) {
-                                if (crctable[i] >>> 24 == t)
-                                    return i;
-                            }
-                            return -1;
-                        },
-                        deepCheck = function (i, index) {
-                            var tc = 0x00, str = '',
-                                hash = crc32(i);
-                            tc = hash & 0xff ^ index[2];
-                            if (!(tc <= 57 && tc >= 48))
-                                return [0];
-                            str += tc - 48;
-                            hash = crctable[index[2]] ^ (hash >>> 8);
-                            tc = hash & 0xff ^ index[1];
-                            if (!(tc <= 57 && tc >= 48))
-                                return [0];
-                            str += tc - 48;
-                            hash = crctable[index[1]] ^ (hash >>> 8);
-                            tc = hash & 0xff ^ index[0];
-                            if (!(tc <= 57 && tc >= 48))
-                                return [0];
-                            str += tc - 48;
-                            hash = crctable[index[0]] ^ (hash >>> 8);
-                            return [1, str];
-                        };
-                    create_table();
-                    var index = new Array(4);
-                    console.log('初始化耗时：' + (new Date().getTime() - startTime) + 'ms');
-                    return function (input) {
-                        var ht = parseInt('0x' + input) ^ 0xffffffff,
-                            snum, i, lastindex, deepCheckData;
-                        for (i = 3; i >= 0; i--) {
-                            index[3 - i] = getcrcindex(ht >>> (i * 8));
-                            snum = crctable[index[3 - i]];
-                            ht ^= snum >>> ((3 - i) * 8);
-                        }
-                        for (i = 0; i < 100000000; i++) {
-                            lastindex = crc32lastindex(i);
-                            if (lastindex == index[3]) {
-                                deepCheckData = deepCheck(i, index)
-                                if (deepCheckData[0])
-                                    break;
-                            }
-                        }
-
-                        if (i == 100000000)
-                            return -1;
-                        console.log('总耗时：' + (new Date().getTime() - startTime) + 'ms');
-                        return i + '' + deepCheckData[1];
                     }
                 }
 
@@ -349,9 +252,8 @@
                         }
                     ).then(() => {
                         // 开始反查用户ID
-                        var midcrc = new biliCrc2Mid();
-                        var result = midcrc(currentSubFilt.value.user);
-                        if (result && result !== '-1') {
+                        var result = converter.hashToMid(currentSubFilt.value.user);
+                        if (result && result !== -1) {
                             ELEMENT_PLUS.ElMessageBox.alert(
                                 `已查到用户ID：
                                 <a href="https://space.bilibili.com/${result}" target="_blank" style="color:#409eff;text-decoration:none;">
@@ -370,7 +272,8 @@
                         } else {
                             ELEMENT_PLUS.ElMessage.error('未能查到用户ID或用户不存在');
                         }
-                    }).catch(() => {
+                    }).catch((err) => {
+                        console.error(err);
                         // 用户点击了取消，只复制midHash
                         navigator.clipboard.writeText(currentSubFilt.value.user).then(() => {
                             ELEMENT_PLUS.ElMessage.success('midHash已复制到剪贴板');
@@ -1124,6 +1027,297 @@
         app.use(ELEMENT_PLUS);
         app.mount('#danmaku-app');
     }
+    // iframe里初始化用户面板应用
+    async function initUserIframeApp(iframe, userData) {
+        const doc = iframe.contentDocument;
+        const win = iframe.contentWindow;
+
+        // 引入外部库
+        const addScript = (src) => new Promise(resolve => {
+            const script = doc.createElement('script');
+            script.src = src;
+            script.onload = resolve;
+            doc.head.appendChild(script);
+        });
+        const addCss = (href) => {
+            const link = doc.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = href;
+            doc.head.appendChild(link);
+        };
+
+        addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css');
+        await addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js');
+        await addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
+
+        const appRoot = doc.createElement('div');
+        appRoot.id = 'user-space-app';
+        doc.body.style.margin = '0';
+        doc.body.appendChild(appRoot);
+
+        const { createApp, ref, onMounted, computed } = win.Vue;
+        const ELEMENT_PLUS = win.ElementPlus;
+        const app = createApp({
+            setup() {
+                const converter = new BiliMidHashConverter();
+                const card = ref(userData.card || {});
+                const stats = ref(userData || {});
+
+                const officialRoleMap = {
+                    0: '无',
+                    1: '个人认证 - 知名UP主',
+                    2: '个人认证 - 大V达人',
+                    3: '机构认证 - 企业',
+                    4: '机构认证 - 组织',
+                    5: '机构认证 - 媒体',
+                    6: '机构认证 - 政府',
+                    7: '个人认证 - 高能主播',
+                    9: '个人认证 - 社会知名人士'
+                };
+                const officialInfo = computed(() => {
+                    const o = card.value?.Official;
+                    if (!o || o.type === -1) return null;
+                    return {
+                        typeText: officialRoleMap[o.role] || '未知认证',
+                        title: o.title || '（无标题）',
+                        desc: o.desc || ''
+                    };
+                });
+                function copyToClipboard(text) {
+                    navigator.clipboard.writeText(text).then(() => {
+                        ELEMENT_PLUS.ElMessage.success('midHash 已复制到剪贴板');
+                    }).catch(() => {
+                        ELEMENT_PLUS.ElMessage.error('复制失败');
+                    });
+                }
+                onMounted(async () => {
+                    card.value.midHash = converter.midToHash(card.value.mid || '')
+                });
+                return {
+                    card,
+                    stats,
+                    officialInfo,
+                    copyToClipboard
+                };
+            },
+            template: `
+<div style="padding: 20px; font-family: sans-serif;">
+    <el-card>
+        <div style="display: flex; gap: 20px;">
+            <!-- 头像 -->
+            <a :href="card.face" target="_blank" title="点击查看头像原图">
+                <el-avatar :size="100" :src="card.face" />
+            </a>
+
+            <!-- 用户信息 -->
+            <div style="flex: 1;">
+                <h2 style="margin: 0;">
+                    {{ card.name }}
+                    <el-tag size="small" style="margin-left: 10px;">{{ card.sex }}</el-tag>
+                    <el-tag v-if="card.level_info" type="success" size="small">
+                        LV{{ card.level_info.current_level }}
+                    </el-tag>
+                    <el-tag v-if="card.vip?.vipStatus === 1" type="warning" size="small">
+                        大会员
+                    </el-tag>
+                </h2>
+
+                <!-- 签名 -->
+                <el-text type="info" size="small" style="margin: 4px 0; display: block;">
+                    {{ card.sign || '这位用户很神秘，什么都没写。' }}
+                </el-text>
+
+                <!-- MID & midHash -->
+                <p>
+                    <b>MID：</b>
+                    <el-link :href="'https://space.bilibili.com/' + card.mid" target="_blank" type="primary"
+                        style="vertical-align: baseline;">
+                        {{ card.mid }}
+                    </el-link>
+                    <el-tooltip content="复制midHash" placement="top">
+                        <el-tag size="small"
+                            style="margin-left: 6px; vertical-align: baseline; cursor: pointer; background-color: #f5f7fa; color: #909399;"
+                            @click="copyToClipboard(card.midHash)">
+                            Hash: {{ card.midHash }}
+                        </el-tag>
+                    </el-tooltip>
+                </p>
+
+                <!-- 认证信息 -->
+                <p v-if="officialInfo">
+                    <b>认证：</b>
+                    <el-tag size="small" style="margin-right: 8px; vertical-align: baseline;">
+                        {{ officialInfo.typeText }}
+                    </el-tag>
+                    <span>{{ officialInfo.title }}</span>
+                    <el-text type="info" size="small" v-if="officialInfo.desc" style="margin-left: 6px;">
+                        （{{ officialInfo.desc }}）
+                    </el-text>
+                </p>
+
+                <!-- 勋章 -->
+                <p v-if="card.nameplate?.name">
+                    <b>勋章：</b>
+                    <a :href="card.nameplate.image" target="_blank" title="点击查看大图">
+                        <el-tag size="small" style="vertical-align: baseline;">
+                            {{ card.nameplate.name }}
+                        </el-tag>
+                    </a>
+                    <el-text type="info" size="small" style="margin-left: 6px;">
+                        {{ card.nameplate.level }} - {{ card.nameplate.condition }}
+                    </el-text>
+                </p>
+
+                <!-- 挂件 -->
+                <p v-if="card.pendant?.name && card.pendant?.image">
+                    <b>挂件：</b>
+                    <a :href="card.pendant.image" target="_blank" title="点击查看大图">
+                        <el-tag size="small" style="vertical-align: baseline;">{{ card.pendant.name }}</el-tag>
+                    </a>
+                </p>
+            </div>
+        </div>
+
+        <!-- 指标数据 -->
+        <el-divider></el-divider>
+        <el-row :gutter="20" justify="space-between">
+            <el-col :span="6">
+                <el-statistic title="关注数" :value="card.friend" />
+            </el-col>
+            <el-col :span="6">
+                <el-statistic title="粉丝数" :value="stats.follower" />
+            </el-col>
+            <el-col :span="6">
+                <el-statistic title="获赞数" :value="stats.like_num" />
+            </el-col>
+            <el-col :span="6">
+                <el-statistic title="稿件数" :value="stats.archive_count" />
+            </el-col>
+        </el-row>
+    </el-card>
+</div>
+`
+        });
+        app.use(win.ElementPlus);
+        app.mount('#user-space-app');
+    }
+    // B站mid与hash转换
+    class BiliMidHashConverter {
+        constructor() {
+            this.crcTable = this._createCRCTable();
+        }
+        _createCRCTable() {
+            const table = new Array(256);
+            const CRCPOLYNOMIAL = 0xEDB88320;
+            var crcreg,
+                i, j;
+            for (i = 0; i < 256; ++i) {
+                crcreg = i;
+                for (j = 0; j < 8; ++j) {
+                    if ((crcreg & 1) != 0) {
+                        crcreg = CRCPOLYNOMIAL ^ (crcreg >>> 1);
+                    }
+                    else {
+                        crcreg >>>= 1;
+                    }
+                }
+                table[i] = crcreg;
+            }
+            return table;
+        }
+
+        /**
+         * mid → hash（用于弹幕中 midHash 显示）
+         */
+        midToHash(mid) {
+            let crc = 0xFFFFFFFF;
+            const input = mid.toString();
+            for (let i = 0; i < input.length; i++) {
+                const byte = input.charCodeAt(i);
+                crc = (crc >>> 8) ^ this.crcTable[(crc ^ byte) & 0xFF];
+            }
+            return ((crc ^ 0xFFFFFFFF) >>> 0).toString(16);
+        }
+
+        /**
+         * 尝试通过 midHash 反查 mid（暴力逆向）
+         * 若失败返回 -1
+         * @param {string} hashStr 16进制字符串（如 '6c2b67a9'）
+         * @param {number} maxTry 最大尝试次数（默认一亿）
+         */
+        hashToMid(hashStr, maxTry = 100_000_000) {
+            var index = new Array(4);
+
+            var ht = parseInt('0x' + hashStr) ^ 0xffffffff,
+                snum, i, lastindex, deepCheckData;
+            for (i = 3; i >= 0; i--) {
+                index[3 - i] = this._getCRCIndex(ht >>> (i * 8));
+                snum = this.crcTable[index[3 - i]];
+                ht ^= snum >>> ((3 - i) * 8);
+            }
+            for (i = 0; i < maxTry; i++) {
+                lastindex = this._crc32LastIndex(i);
+                if (lastindex == index[3]) {
+                    deepCheckData = this._deepCheck(i, index)
+                    if (deepCheckData[0])
+                        break;
+                }
+            }
+
+            if (i == 100000000)
+                return -1;
+            return i + '' + deepCheckData[1];
+        }
+        _crc32(input) {
+            if (typeof (input) != 'string')
+                input = input.toString();
+            var crcstart = 0xFFFFFFFF, len = input.length, index;
+            for (var i = 0; i < len; ++i) {
+                index = (crcstart ^ input.charCodeAt(i)) & 0xff;
+                crcstart = (crcstart >>> 8) ^ this.crcTable[index];
+            }
+            return crcstart;
+        }
+        _crc32LastIndex(input) {
+            if (typeof (input) != 'string')
+                input = input.toString();
+            var crcstart = 0xFFFFFFFF, len = input.length, index;
+            for (var i = 0; i < len; ++i) {
+                index = (crcstart ^ input.charCodeAt(i)) & 0xff;
+                crcstart = (crcstart >>> 8) ^ this.crcTable[index];
+            }
+            return index;
+        }
+        _getCRCIndex(t) {
+            //if(t>0)
+            //t-=256;
+            for (var i = 0; i < 256; i++) {
+                if (this.crcTable[i] >>> 24 == t)
+                    return i;
+            }
+            return -1;
+        }
+        _deepCheck(i, index) {
+            var tc = 0x00, str = '',
+                hash = this._crc32(i);
+            tc = hash & 0xff ^ index[2];
+            if (!(tc <= 57 && tc >= 48))
+                return [0];
+            str += tc - 48;
+            hash = this.crcTable[index[2]] ^ (hash >>> 8);
+            tc = hash & 0xff ^ index[1];
+            if (!(tc <= 57 && tc >= 48))
+                return [0];
+            str += tc - 48;
+            hash = this.crcTable[index[1]] ^ (hash >>> 8);
+            tc = hash & 0xff ^ index[0];
+            if (!(tc <= 57 && tc >= 48))
+                return [0];
+            str += tc - 48;
+            hash = this.crcTable[index[0]] ^ (hash >>> 8);
+            return [1, str];
+        }
+    }
     // 获取数据
     class BiliDanmakuUtils {
         constructor() {
@@ -1236,6 +1430,21 @@
                 danmakuData: this.danmakuData
             };
         }
+        async getUserCardData(mid) {
+            try {
+                const res = await fetch(`https://api.bilibili.com/x/web-interface/card?mid=${mid}&photo=true`);
+                const json = await res.json();
+                if (json.code === 0) {
+                    this.logTag(`获取用户名片成功：${mid}`);
+                    return json.data;
+                } else {
+                    throw new Error(json.message || '获取用户信息失败');
+                }
+            } catch (e) {
+                this.logTagError('请求用户信息失败:', e);
+                return { card: { mid } };
+            }
+        }
     }
     const dmUtils = new BiliDanmakuUtils();
 
@@ -1244,63 +1453,44 @@
         const btn = document.createElement('div');
         btn.id = 'danmaku-stat-btn';
         btn.innerHTML = `
-        <span class="label">弹幕统计</span>
-        <div class="icon-wrapper">
+        <span style="margin-left: 20px; white-space: nowrap; color: #00ace5; user-select: none;">弹幕统计</span>
+        <div style="display: flex; align-items: center; justify-content: center; margin-right: 8px; flex-shrink: 0;">
           <svg t="1745985333201" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1486" 
           width="24" height="24">
             <path d="M691.2 928.2V543.1c0-32.7 26.5-59.3 59.2-59.3h118.5c32.7 0 59.3 26.5 59.3 59.2V928.2h-237z m192.6-385.1c0-8.2-6.6-14.8-14.8-14.8H750.5c-8.2 0-14.8 6.6-14.9 14.7v340.8h148.2V543.1zM395 157.8c-0.1-32.6 26.3-59.2 58.9-59.3h118.8c32.6 0 59.1 26.5 59.1 59.1v770.6H395V157.8z m44.4 725.9h148V157.9c0-8.1-6.5-14.7-14.7-14.8H454.1c-8.1 0.1-14.7 6.7-14.7 14.8v725.8zM98.6 394.9c0-32.7 26.5-59.2 59.2-59.3h118.5c32.7-0.1 59.3 26.4 59.3 59.1v533.5h-237V394.9z m44.5 488.8h148.2V394.9c0-8.2-6.7-14.8-14.8-14.8H158c-8.2 0-14.8 6.6-14.9 14.7v488.9z" p-id="1487" fill="#00ace5"></path>
           </svg>
         </div>
       `;
-        btn.style.position = 'fixed';
-        btn.style.left = '-100px'; // 露出约20px图标
-        btn.style.bottom = '40px';
-        btn.style.zIndex = '9997';
-        btn.style.width = '120px';
-        btn.style.height = '40px';
-        btn.style.backgroundColor = 'transparent';
-        btn.style.color = '#00ace5';
-        btn.style.borderTopRightRadius = '20px';
-        btn.style.borderBottomRightRadius = '20px';
-        btn.style.cursor = 'pointer';
-        btn.style.fontSize = '16px';
-        btn.style.display = 'flex';
-        btn.style.alignItems = 'center';
-        btn.style.justifyContent = 'space-between';
-        btn.style.boxShadow = '0 0 5px rgba(0, 172, 229, 0.3)';
-        btn.style.transition = 'left 0.3s ease-in-out, background-color 0.2s ease-in-out';
-
+        Object.assign(btn.style, {
+            position: 'fixed',
+            left: '-100px',
+            bottom: '40px',
+            zIndex: '9997',
+            width: '120px',
+            height: '40px',
+            backgroundColor: 'transparent',
+            color: '#00ace5',
+            borderTopRightRadius: '20px',
+            borderBottomRightRadius: '20px',
+            cursor: 'pointer',
+            fontSize: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            boxShadow: '0 0 5px rgba(0, 172, 229, 0.3)',
+            transition: 'left 0.3s ease-in-out, background-color 0.2s ease-in-out',
+        });
         btn.onmouseenter = () => {
             btn.style.left = '-10px';
             btn.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
             btn.style.border = '1px solid #00ace5';
         };
-
         btn.onmouseleave = () => {
             btn.style.left = '-100px';
             btn.style.backgroundColor = 'transparent';
             btn.style.border = 'none';
         };
-
         btn.onclick = openPanel;
-
-        const style = document.createElement('style');
-        style.textContent = `
-        #danmaku-stat-btn .label {
-          margin-left: 20px;
-          white-space: nowrap;
-          color: #00ace5;
-        }
-        #danmaku-stat-btn .icon-wrapper {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          margin-right: 8px;
-          flex-shrink: 0;
-        }
-      `;
-        document.head.appendChild(style);
-
         document.body.appendChild(btn);
     }
     // 打开iframe弹幕统计面板
@@ -1309,17 +1499,15 @@
             console.warn('统计面板已打开');
             return;
         }
-
         // 创建蒙层
         const overlay = document.createElement('div');
         overlay.id = 'danmaku-stat-overlay';
-        overlay.style.position = 'fixed';
-        overlay.style.top = '0';
-        overlay.style.left = '0';
-        overlay.style.width = '100%';
-        overlay.style.height = '100%';
-        overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-        overlay.style.zIndex = '9998';
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 9998;
+        `;
         overlay.onclick = () => {
             document.getElementById('danmaku-stat-iframe')?.remove();
             overlay.remove();
@@ -1329,32 +1517,39 @@
         // 创建iframe
         const iframe = document.createElement('iframe');
         iframe.id = 'danmaku-stat-iframe';
-        iframe.style.position = 'fixed';
-        iframe.style.top = '15%';
-        iframe.style.left = '15%';
-        iframe.style.width = '70%';
-        iframe.style.height = '70%';
-        iframe.style.backgroundColor = '#fff';
-        iframe.style.zIndex = '9999';
-        iframe.style.padding = '20px';
-        iframe.style.overflow = 'hidden';
-        iframe.style.borderRadius = '8px';
-        iframe.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
+        iframe.style.cssText = `
+            position: fixed;
+            top: 15%; left: 15%; width: 70%; height: 70%;
+            background-color: #fff;
+            z-index: 9999;
+            padding: 20px;
+            overflow: hidden;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        `;
+
+        const match = location.href.match(/^https:\/\/space\.bilibili\.com\/(\d+)/);
+        const isUserPage = !!match;
         iframe.onload = async () => {
             try {
-                await dmUtils.fetchAllData(location.href);
-                initIframeApp(iframe, dmUtils, {
-                    type: 0,
-                    newPanel: function (type) {
-                        if (type == 0) {
-                            openPanelInNewTab();
-                            dmUtils.logTag('[主页面] 新建子页面');
+                if (isUserPage) {
+                    const mid = match[1];
+                    const userData = await dmUtils.getUserCardData(mid);
+                    await initUserIframeApp(iframe, userData);
+                } else {
+                    await dmUtils.fetchAllData(location.href);
+                    await initIframeApp(iframe, dmUtils, {
+                        type: 0, newPanel: function (type) {
+                            if (type == 0) {
+                                openPanelInNewTab();
+                                dmUtils.logTag('[主页面] 新建子页面');
+                            }
                         }
-                    }
-                });
+                    });
+                }
             } catch (err) {
                 dmUtils.logTagError('初始化失败:', err);
-                alert(`弹幕统计加载失败：${err.message}`);
+                alert(`面板加载失败：${err.message}`);
             }
         };
         document.body.appendChild(iframe);
@@ -1379,6 +1574,7 @@
         <script>
             ${initIframeApp.toString()}
             ${BiliDanmakuUtils.toString()}
+            ${BiliMidHashConverter.toString()}
             let dmUtils = new BiliDanmakuUtils();
             window.addEventListener('message', function(event) {
                 Object.assign(dmUtils, event.data);
@@ -1453,6 +1649,7 @@
         <script>
             ${initIframeApp.toString()}
             ${BiliDanmakuUtils.toString()}
+            ${BiliMidHashConverter.toString()}
             const dmUtils = new BiliDanmakuUtils();
             Object.assign(dmUtils, ${JSON.stringify(dmUtils)});
             const iframe = document.createElement('iframe');
