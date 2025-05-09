@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.6.1
+// @version      1.6.2
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -820,7 +820,7 @@
                         <el-link v-if="videoData.epid"
                             :href="'https://www.bilibili.com/bangumi/play/ep' + videoData.epid" target="_blank"
                             type="primary" style="vertical-align: baseline;">
-                            {{ videoData.epid }}
+                            ep{{ videoData.epid }}
                         </el-link><br />
                     </template>
                     <template v-else>
