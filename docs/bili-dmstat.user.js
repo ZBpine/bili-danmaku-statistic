@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.6.0
+// @version      1.6.1
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/list/watchlater*
+// @match        https://www.bilibili.com/bangumi/play/ep*
 // @match        https://space.bilibili.com/*
 // @grant        none
 // @license      MIT
@@ -61,7 +62,7 @@
                 const currentFilt = ref('');
                 const currentSubFilt = ref({});
                 const danmakuCount = ref({ user: 0, dm: 0 });
-                const videoData = ref(dataParam.videoData);
+                const videoData = ref(dataParam.videoData || {});
                 const isTableVisible = ref(true);
                 const isTableAutoH = ref(false);
                 const loading = ref(true);
@@ -682,7 +683,7 @@
                 }
 
                 onMounted(async () => {
-                    if (!dataParam?.videoData || !dataParam?.danmakuData || !Array.isArray(dataParam.danmakuData)) {
+                    if ((!dataParam?.videoData && !dataParam?.episodeData) || !Array.isArray(dataParam?.danmakuData)) {
                         ELEMENT_PLUS.ElMessageBox.alert(
                             '初始化数据缺失，无法加载弹幕统计面板。请确认主页面传入了有效数据。',
                             '错误',
@@ -690,18 +691,59 @@
                         );
                         dataParam.danmakuData = [];
                     }
-                    if (dataParam.videoData?.pic?.startsWith('http:')) {
-                        dataParam.videoData.pic = dataParam.videoData.pic.replace(/^http:/, 'https:');
+                    if (dataParam.epid && dataParam.episodeData) {
+                        let ep = null;
+                        let sectionTitle = null;
+                        if (Array.isArray(dataParam.episodeData.episodes)) {
+                            ep = dataParam.episodeData.episodes.find(e => e.ep_id === dataParam.epid || e.id === dataParam.epid);
+                        }
+                        if (!ep && Array.isArray(dataParam.episodeData.section)) {
+                            for (const section of dataParam.episodeData.section) {
+                                ep = section.episodes?.find(e => e.ep_id === dataParam.epid || e.id === dataParam.epid);
+                                if (ep) {
+                                    sectionTitle = section.title;
+                                    break;
+                                }
+                            }
+                        }
+                        if (ep) {
+                            Object.assign(videoData.value, {
+                                bvid: ep.bvid,
+                                cid: ep.cid,
+                                epid: ep.ep_id || ep.id,
+                                section_title: sectionTitle,
+                                title: ep.share_copy || ep.show_title || ep.long_title || ep.title,
+                                duration: ep.duration / 1000,
+                                pic: ep.cover,
+                                owner: {
+                                    mid: dataParam.episodeData.up_info?.mid,
+                                    name: dataParam.episodeData.up_info?.uname,
+                                    face: dataParam.episodeData.up_info?.avatar
+                                },
+                                pubdate: ep.pub_time,
+                                stat: {
+                                    view: ep.stat?.play,
+                                    danmaku: ep.stat?.danmakus,
+                                    reply: ep.stat?.reply,
+                                    coin: ep.stat?.coin,
+                                    like: ep.stat?.likes,
+                                    vt: ep.stat?.vt
+                                }
+                            });
+                        }
                     }
-                    if (dataParam.videoData?.owner?.face?.startsWith('http:')) {
-                        dataParam.videoData.owner.face = dataParam.videoData.owner.face.replace(/^http:/, 'https:');
+                    if (videoData.value?.pic?.startsWith('http:')) {
+                        videoData.value.pic = videoData.value.pic.replace(/^http:/, 'https:');
                     }
-                    if (dataParam.videoData.pages) {
-                        if (!isNaN(dataParam.p) && dataParam.videoData.pages[dataParam.p - 1]) {
-                            videoData.value.page_cur = dataParam.videoData.pages[dataParam.p - 1];
+                    if (videoData.value?.owner?.face?.startsWith('http:')) {
+                        videoData.value.owner.face = videoData.value.owner.face.replace(/^http:/, 'https:');
+                    }
+                    if (videoData.value.pages) {
+                        if (!isNaN(dataParam.p) && videoData.value.pages[dataParam.p - 1]) {
+                            videoData.value.page_cur = videoData.value.pages[dataParam.p - 1];
                             videoData.value.duration = videoData.value.page_cur.duration;
-                        } else if (dataParam.videoData.pages[0]) {
-                            videoData.value.duration = dataParam.videoData.pages[0].duration;
+                        } else if (videoData.value.pages[0]) {
+                            videoData.value.duration = videoData.value.pages[0].duration;
                         }
                     }
                     manager = new DanmakuManager(dataParam.danmakuData);
@@ -768,13 +810,26 @@
                 <el-tag type="success" v-if="videoData.page_cur">
                     第 {{ videoData.page_cur.page }} P：{{ videoData.page_cur.part }}
                 </el-tag>
+                <el-tag type="success" v-if="videoData.section_title">
+                    {{ videoData.section_title }}
+                </el-tag>
 
                 <p style="margin: 10px;">
-                    BVID：
-                    <el-link v-if="videoData.bvid" :href="'https://www.bilibili.com/video/' + videoData.bvid"
-                        target="_blank" type="primary" style="vertical-align: baseline;">
-                        {{ videoData.bvid }}
-                    </el-link><br />
+                    <template v-if="videoData.epid">
+                        EPID：
+                        <el-link v-if="videoData.epid"
+                            :href="'https://www.bilibili.com/bangumi/play/ep' + videoData.epid" target="_blank"
+                            type="primary" style="vertical-align: baseline;">
+                            {{ videoData.epid }}
+                        </el-link><br />
+                    </template>
+                    <template v-else>
+                        BVID：
+                        <el-link v-if="videoData.bvid" :href="'https://www.bilibili.com/video/' + videoData.bvid"
+                            target="_blank" type="primary" style="vertical-align: baseline;">
+                            {{ videoData.bvid }}
+                        </el-link><br />
+                    </template>
                     UP主：
                     <el-link v-if="videoData.owner" :href="'https://space.bilibili.com/' + videoData.owner.mid"
                         target="_blank" type="primary" style="vertical-align: baseline;">
@@ -885,7 +940,7 @@
                     </span>
                     <el-popover placement="bottom" width="160" trigger="click">
                         <template v-slot:reference>
-                            <el-button text style="margin-right: 10px;" circle @click.stop />
+                            <el-button text style="margin-right: 20px;" circle @click.stop />
                         </template>
                         <div style="padding: 4px 8px;">
                             <el-switch v-model="isTableAutoH" active-text="自动高度" inactive-text="有限高度" />
@@ -1323,8 +1378,11 @@
         constructor() {
             this.bvid = null;
             this.p = null;
+            this.epid = null;
+            this.type = null;
             this.cid = null;
             this.videoData = null;
+            this.episodeData = null;
             this.danmakuData = null;
             this.danmakuXmlText = null;
             this.logStyle = {
@@ -1368,6 +1426,7 @@
         parseBiliUrl(url) {
             this.bvid = null;
             this.p = null;
+            this.epid = null;
             const bvidMatch = url.match(/BV[a-zA-Z0-9]+/);
             if (bvidMatch) this.bvid = bvidMatch[0];
             if (this.bvid) {
@@ -1384,13 +1443,41 @@
                     this.logTag(`解析 URL 得到 BVID=${this.bvid}`);
                 }
             } else {
-                this.logTagError(`解析 URL=${url} 未找到 BVID`);
+                const epidMatch = url.match(/ep(\d+)/);
+                if (epidMatch) {
+                    this.epid = parseInt(epidMatch[1]);
+                } else {
+                    this.logTagError(`URL=${url} 解析未找到 ID 信息`);
+                }
             }
-            return { bvid: this.bvid, p: this.p };
+        }
+        _findCid() {
+            if (this.bvid) {
+                this.cid = this.videoData.pages[this.p - 1]?.cid || this.videoData.cid;
+                return this.cid
+            }
+            if (this.epid) {
+                if (Array.isArray(this.episodeData.episodes)) {
+                    const ep = this.episodeData.episodes.find(e => e.ep_id === this.epid || e.id === this.epid);
+                    if (ep) {
+                        this.cid = ep.cid;
+                        return this.cid
+                    }
+                }
+                if (Array.isArray(this.episodeData.section)) {
+                    for (const section of this.episodeData.section) {
+                        const ep = section.episodes?.find(e => e.ep_id === this.epid || e.id === this.epid);
+                        if (ep) {
+                            this.cid = ep.cid;
+                            return this.cid
+                        }
+                    }
+                }
+            }
         }
         async getVideoData() {
+            if (!this.bvid) return null;
             try {
-                if (!this.bvid) throw new Error('BVID 缺失');
                 const res = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${this.bvid}`);
                 const json = await res.json();
                 if (json && json.data) {
@@ -1404,9 +1491,25 @@
                 return null;
             }
         }
+        async getEpisodeData() {
+            if (!this.epid) return null;
+            try {
+                const res = await fetch(`https://api.bilibili.com/pgc/view/web/season?ep_id=${this.epid}`);
+                const json = await res.json();
+                if (json && json.result) {
+                    this.episodeData = json.result;
+                    this.logTag('获取剧集信息成功');
+                    return this.episodeData;
+                }
+                else throw new Error(`剧集信息接口请求失败，json：${json}`);
+            } catch (e) {
+                this.logTagError('请求剧集信息失败:', e);
+                return null;
+            }
+        }
         async getDanmakuData() {
             try {
-                this.cid = this.videoData.pages[this.p - 1]?.cid || this.videoData.cid;
+                this._findCid();
                 if (!this.cid) throw new Error('ChatID 缺失');
 
                 const res = await fetch(`https://api.bilibili.com/x/v1/dm/list.so?oid=${this.cid}`);
@@ -1424,6 +1527,7 @@
         async fetchAllData(url) {
             this.parseBiliUrl(url);
             await this.getVideoData();
+            await this.getEpisodeData();
             await this.getDanmakuData();
             return {
                 videoData: this.videoData,
@@ -1578,9 +1682,8 @@
             let dmUtils = new BiliDanmakuUtils();
             window.addEventListener('message', function(event) {
                 Object.assign(dmUtils, event.data);
-                if (!dmUtils.videoData || !dmUtils.danmakuData) {
+                if (!dmUtils.danmakuData) {
                     dmUtils.logTagError('数据获取失败');
-                    return;
                 } else {
                     dmUtils.logTag('[子页面] 收到数据');
                 }
@@ -1680,7 +1783,10 @@
         const blobUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = blobUrl;
-        link.download = `${dmUtils.bvid}_danmaku_statistics.html`;
+        let filename = '';
+        if (dmUtils.bvid) filename = dmUtils.bvid;
+        if (dmUtils.epid) filename = 'ep' + dmUtils.epid;
+        link.download = `${filename}_danmaku_statistics.html`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
