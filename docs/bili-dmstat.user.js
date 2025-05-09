@@ -1168,7 +1168,7 @@
             <div style="flex: 1;">
                 <h2 style="margin: 0;">
                     {{ card.name }}
-                    <el-tag size="small" style="margin-left: 10px;">{{ card.sex }}</el-tag>
+                    <el-tag v-if="card.sex !== '保密'" size="small" style="margin-left: 10px;">{{ card.sex }}</el-tag>
                     <el-tag v-if="card.level_info" type="success" size="small">
                         LV{{ card.level_info.current_level }}
                     </el-tag>
