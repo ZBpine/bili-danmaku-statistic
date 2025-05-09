@@ -31,6 +31,7 @@
 - [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect)
   - [xml实时弹幕](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/danmaku/danmaku_xml.md)
   - [视频基本信息](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/video/info.md)
+  - [剧集基本信息](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/bangumi/info.md#%E8%8E%B7%E5%8F%96%E5%89%A7%E9%9B%86%E6%98%8E%E7%BB%86web%E7%AB%AFssidepid%E6%96%B9%E5%BC%8F)
   - [用户名片信息](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/user/info.md#%E7%94%A8%E6%88%B7%E5%90%8D%E7%89%87%E4%BF%A1%E6%81%AF)
 - [BiliBili_crc2mid](https://github.com/shafferjohn/bilibili-search)
 - [iconfont](https://www.iconfont.cn/)
@@ -58,4 +59,5 @@
 - 增加弹幕列表收起功能
 
 **版本1.6**
+- 增加剧集弹幕统计
 - 增加用户主页查看用户名片信息（计算midHash）
