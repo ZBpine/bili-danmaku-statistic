@@ -31,6 +31,7 @@
 - [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect)
   - [xml实时弹幕](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/danmaku/danmaku_xml.md)
   - [视频基本信息](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/video/info.md)
+  - [用户名片信息](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/user/info.md#%E7%94%A8%E6%88%B7%E5%90%8D%E7%89%87%E4%BF%A1%E6%81%AF)
 - [BiliBili_crc2mid](https://github.com/shafferjohn/bilibili-search)
 - [iconfont](https://www.iconfont.cn/)
 
@@ -55,3 +56,6 @@
 **版本1.5**
 - 增加图表关闭、调整顺序功能
 - 增加弹幕列表收起功能
+
+**版本1.6**
+- 增加用户主页查看用户名片信息（计算midHash）
