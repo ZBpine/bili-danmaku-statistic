@@ -13,8 +13,9 @@
 6. 点击弹幕列表可定位发送者在条形图中的位置。
 7. 右上方“载入实时弹幕xx条”的链接点开为弹幕xml文件，ctrl+s下载。
 8. 可下载视频封面、up头像等。
-9. 可转为[长条图片](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example02.png)。
-10. 可下载html文件至本地。先新标签页打开，再点击保存。下载至本地后所有图标的交互都保留。
+9. 可在用户主页空间查看midHash，然后在用户弹幕统计定位用户。
+10. 可转为[长条图片](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example02.png)，截长图前可自由调整图表顺序/关闭图表/收起弹幕列表。
+11. 可下载html文件至本地。先新标签页打开，再点击保存。下载至本地后所有图表的交互都保留。
 
 ![图片01](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example01.png)
 
