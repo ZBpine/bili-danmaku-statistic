@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.6.2
+// @version      1.6.4
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -57,7 +57,7 @@
             setup() {
                 const converter = new BiliMidHashConverter();
                 const displayedDanmakus = ref([]);
-                const filterText = ref('^(哈|呵|h|ha|HA|H+|233+)+$');
+                const filterText = ref('^(哈|呵|h|ha|H|HA|233+)+$');
                 const originDanmakuCount = ref(0);
                 const currentFilt = ref('');
                 const currentSubFilt = ref({});
@@ -66,34 +66,285 @@
                 const isTableVisible = ref(true);
                 const isTableAutoH = ref(false);
                 const loading = ref(true);
-                const isExpandedUserChart = ref(false);
                 const panelInfo = ref(panelInfoParam);
                 const visibleCharts = ref(['user', 'wordcloud', 'density', 'date', 'hour']);
                 const chartHover = ref(null);
-                const charts = {
-                    user: null,
-                    wordcloud: null,
-                    density: null,
-                    date: null,
-                    hour: null
-                };
                 let manager = null;
+                const charts = {
+                    user: {
+                        instance: null,
+                        expandedH: false,
+                        render() {
+                            const stats = manager.stats;
+                            const userNames = stats.map(item => item.user);
+                            const counts = stats.map(item => item.count);
+                            const maxCount = Math.max(...counts);
 
+                            const sc = this.expandedH ? 20 : 8;
+
+                            this.instance.setOption({
+                                tooltip: {},
+                                title: { text: '用户弹幕统计' },
+                                grid: { left: 100 },
+                                xAxis: {
+                                    type: 'value',
+                                    min: 0,
+                                    max: Math.ceil(maxCount * 1.1), // 横轴最大值略大一点
+                                    scale: false
+                                },
+                                yAxis: {
+                                    type: 'category',
+                                    data: userNames,
+                                    inverse: true
+                                },
+                                dataZoom: [
+                                    {
+                                        type: 'slider',
+                                        yAxisIndex: 0,
+                                        startValue: 0,
+                                        endValue: userNames.length >= sc ? sc - 1 : userNames.length,
+                                        width: 20
+                                    }
+                                ],
+                                series: [{
+                                    type: 'bar',
+                                    data: counts,
+                                    label: {
+                                        show: true,
+                                        position: 'right',  // 在条形右边显示
+                                        formatter: '{c}',   // 显示数据本身
+                                        fontSize: 12
+                                    }
+                                }]
+                            });
+                        },
+                        async onClick(params) {
+                            const selectedUser = params.name;
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => d.midHash === selectedUser),
+                                { user: selectedUser }
+                            );
+                        }
+                    },
+                    wordcloud: {
+                        instance: null,
+                        expandedH: false,
+                        render() {
+                            const data = manager.filtered;
+                            const freq = {};
+                            data.forEach(d => {
+                                d.content.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ').split(/\s+/).forEach(w => {
+                                    if (w.length >= 2) freq[w] = (freq[w] || 0) + 1;
+                                });
+                            });
+                            const list = Object.entries(freq).map(([name, value]) => ({ name, value }));
+                            this.instance.setOption({
+                                title: { text: '弹幕词云' },
+                                tooltip: {},
+                                series: [{
+                                    type: 'wordCloud',
+                                    gridSize: 8,
+                                    sizeRange: [12, 40],
+                                    rotationRange: [0, 0],
+                                    shape: 'circle',
+                                    data: list
+                                }]
+                            });
+                        },
+                        async onClick(params) {
+                            const keyword = params.name;
+                            const regex = new RegExp(keyword, 'i');
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => regex.test(d.content)),
+                                { wordcloud: keyword }
+                            );
+                        }
+                    },
+                    density: {
+                        instance: null,
+                        expandedH: false,
+                        render() {
+                            const data = manager.filtered;
+                            const duration = videoData.value.duration * 1000; // ms
+                            const minutes = duration / 1000 / 60;
+
+                            // 动态设置 bin 数量
+                            let binCount = 100;
+                            if (minutes <= 10) binCount = 60;
+                            else if (minutes <= 30) binCount = 90;
+                            else if (minutes <= 60) binCount = 60;
+                            else binCount = 30;
+
+                            const bins = new Array(binCount).fill(0);
+                            data.forEach(d => {
+                                const idx = Math.floor((d.progress / duration) * binCount);
+                                bins[Math.min(idx, bins.length - 1)]++;
+                            });
+
+                            const dataPoints = [];
+                            for (let i = 0; i < binCount; i++) {
+                                const timeSec = Math.floor((i * duration) / binCount / 1000);
+                                dataPoints.push({
+                                    value: [timeSec, bins[i]],
+                                    name: formatProgress(timeSec * 1000)
+                                });
+                            }
+
+                            this.instance.setOption({
+                                title: { text: '弹幕密度分布' },
+                                tooltip: {
+                                    trigger: 'axis',
+                                    formatter: function (params) {
+                                        const sec = params[0].value[0];
+                                        return `时间段：${formatProgress(sec * 1000)}<br/>弹幕数：${params[0].value[1]}`;
+                                    },
+                                    axisPointer: {
+                                        type: 'line'
+                                    }
+                                },
+                                xAxis: {
+                                    type: 'value',
+                                    name: '时间',
+                                    min: 0,
+                                    max: Math.ceil(duration / 1000),
+                                    axisLabel: {
+                                        formatter: val => formatProgress(val * 1000)
+                                    }
+                                },
+                                yAxis: {
+                                    type: 'value',
+                                    name: '弹幕数量'
+                                },
+                                series: [{
+                                    data: dataPoints,
+                                    type: 'line',
+                                    smooth: true,
+                                    areaStyle: {} // 可选加背景区域
+                                }]
+                            });
+                        },
+                        async onClick(params) {
+                            const targetTime = params.value[0] * 1000;
+                            const list = displayedDanmakus.value;
+                            if (!list.length) return;
+                            // 找到最接近的弹幕 index
+                            let closestIndex = 0;
+                            let minDiff = Math.abs(list[0].progress - targetTime);
+                            for (let i = 1; i < list.length; i++) {
+                                const diff = Math.abs(list[i].progress - targetTime);
+                                if (diff < minDiff) {
+                                    closestIndex = i;
+                                    minDiff = diff;
+                                }
+                            }
+                            // 使用 Element Plus 表格 ref 滚动到该行
+                            nextTick(() => {
+                                const rows = doc.querySelectorAll('.el-table__body-wrapper tbody tr');
+                                const row = rows?.[closestIndex];
+                                if (row) {
+                                    row.scrollIntoView({
+                                        behavior: 'smooth',
+                                        block: 'center'
+                                    });
+                                    const original = row.style.backgroundColor;
+                                    row.style.transition = 'background-color 0.3s ease';
+                                    row.style.backgroundColor = '#ecf5ff';
+                                    setTimeout(() => {
+                                        row.style.backgroundColor = original || '';
+                                    }, 1500);
+                                }
+                            });
+                        }
+                    },
+                    date: {
+                        instance: null,
+                        expandedH: false,
+                        render() {
+                            const data = manager.filtered;
+                            const countMap = {};
+                            data.forEach(d => {
+                                const date = formatTime(d.ctime).split(' ')[0];
+                                countMap[date] = (countMap[date] || 0) + 1;
+                            });
+                            // 按日期升序排序
+                            const sorted = Object.entries(countMap).sort((a, b) => new Date(a[0]) - new Date(b[0]));
+                            const x = sorted.map(([date]) => date);
+                            const y = sorted.map(([, count]) => count);
+
+                            const totalDays = x.length;
+                            const startIdx = Math.max(0, totalDays - 30); // 只显示最近30天
+                            this.instance.setOption({
+                                title: { text: '发送日期分布' },
+                                tooltip: {},
+                                xAxis: { type: 'category', data: x },
+                                yAxis: { type: 'value', name: '弹幕数量' },
+                                dataZoom: [
+                                    {
+                                        type: 'slider',
+                                        startValue: startIdx,
+                                        endValue: totalDays - 1,
+                                        xAxisIndex: 0,
+                                        height: 20
+                                    }
+                                ],
+                                series: [{ type: 'bar', data: y }]
+                            });
+                        },
+                        async onClick(params) {
+                            const selectedDate = params.name;
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
+                                { date: selectedDate }
+                            );
+                        }
+                    },
+                    hour: {
+                        instance: null,
+                        expandedH: false,
+                        render() {
+                            const data = manager.filtered;
+                            const hours = new Array(24).fill(0);
+                            data.forEach(d => {
+                                const hour = new Date(d.ctime * 1000).getHours();
+                                hours[hour]++;
+                            });
+                            this.instance.setOption({
+                                title: { text: '发送时间分布' },
+                                tooltip: {},
+                                xAxis: { type: 'category', data: hours.map((_, i) => i + '时') },
+                                yAxis: { type: 'value', name: '弹幕数量' },
+                                series: [{ type: 'bar', data: hours }]
+                            });
+                        },
+                        async onClick(params) {
+                            const selectedHour = parseInt(params.name);
+                            await updateDispDanmakus(
+                                manager.filtered.filter(d => {
+                                    const h = new Date(d.ctime * 1000).getHours();
+                                    return h === selectedHour;
+                                }),
+                                { hour: selectedHour }
+                            );
+                        }
+                    }
+                };
                 class DanmakuManager {
                     constructor(danmakuList) {
                         this.original = [...danmakuList].sort((a, b) => a.progress - b.progress);
-                        this.filtered = [...this.original]; // 保持同步顺序
+                        this.reset();
                     }
 
                     reset() {
                         this.filtered = [...this.original];
+                        this.stats = this._getStats();
                     }
 
                     filter(regex) {
                         this.filtered = this.original.filter(d => regex.test(d.content));
+                        this.stats = this._getStats();
                     }
 
-                    getStats() {
+                    _getStats() {
                         const countMap = {};
                         for (const d of this.filtered) {
                             countMap[d.midHash] = (countMap[d.midHash] || 0) + 1;
@@ -284,6 +535,28 @@
                     });
                 }
 
+                function renderChart(chart) {
+                    const el = doc.getElementById('chart-' + chart);
+                    if (!el) return;
+
+                    if (!charts[chart].instance) {
+                        el.style.height = charts[chart].expandedH ? '100%' : '50%';
+                        charts[chart].instance = ECHARTS.init(el);
+                        charts[chart].instance.on('click', charts[chart].onClick);
+                    }
+                    charts[chart].render();
+                }
+                function disposeChart(chart) {
+                    if (charts[chart].instance && charts[chart].instance.dispose) {
+                        charts[chart].instance.dispose();
+                        charts[chart].instance = null;
+                    }
+                }
+                function expandChart(chart) {
+                    charts[chart].expandedH = !charts[chart].expandedH;
+                    disposeChart(chart);
+                    renderChart(chart);
+                }
                 function moveChartUp(chart) {
                     const idx = visibleCharts.value.indexOf(chart);
                     if (idx > 0) {
@@ -302,327 +575,35 @@
                     const idx = visibleCharts.value.indexOf(chart);
                     if (idx !== -1) {
                         visibleCharts.value.splice(idx, 1);
-                        // 销毁 ECharts 实例
-                        const inst = charts[chart];
-                        if (inst && inst.dispose) {
-                            inst.dispose();
-                            charts[chart] = null;
-                        }
+                        disposeChart(chart);
                     }
                 }
 
-                function renderUserChart(stats) {
-                    const el = doc.getElementById('chart-user');
-                    if (!el) return;
-                    if (!charts.user) {
-                        el.style.height = isExpandedUserChart.value ? '100%' : '50%';
-                        charts.user = ECHARTS.init(el);
-                        charts.user.on('click', async (params) => {
-                            const selected = params.name;
-                            await updateDispDanmakus(
-                                manager.filtered.filter(d => d.midHash === selected),
-                                { user: selected }
-                            );
-                        });
-                        // 点击标题切换展开状态
-                        charts.user.getZr().on('click', function (params) {
-                            if (params.offsetY >= 0 && params.offsetY <= 40) {
-                                isExpandedUserChart.value = !isExpandedUserChart.value;
-                                if (charts.user) {
-                                    charts.user.dispose();
-                                    charts.user = null;
-                                }
-                                renderUserChart(stats); // 重新绘制
-                            }
-                        });
-                    }
-                    const userNames = stats.map(item => item.user);
-                    const counts = stats.map(item => item.count);
-                    const maxCount = Math.max(...counts);
+                function locateUserInChart(midHash) {
+                    if (!charts.user.instance) return;
+                    const option = charts.user.instance.getOption();
+                    const index = option.yAxis[0].data.indexOf(midHash);
 
-                    const sc = isExpandedUserChart.value ? 20 : 8;
-
-                    charts.user.setOption({
-                        tooltip: {},
-                        title: { text: '用户弹幕统计' },
-                        grid: { left: 100 },
-                        xAxis: {
-                            type: 'value',
-                            min: 0,
-                            max: Math.ceil(maxCount * 1.1), // 横轴最大值略大一点
-                            scale: false
-                        },
-                        yAxis: {
-                            type: 'category',
-                            data: userNames,
-                            inverse: true
-                        },
-                        dataZoom: [
+                    if (index === -1) {
+                        ELEMENT_PLUS.ElMessageBox.alert(
+                            `未在当前图表中找到用户 <b>${midHash}</b>`,
+                            '未找到用户',
                             {
-                                type: 'slider',
-                                yAxisIndex: 0,
-                                startValue: 0,
-                                endValue: userNames.length >= sc ? sc - 1 : userNames.length,
-                                width: 20
+                                type: 'warning',
+                                dangerouslyUseHTMLString: true,
+                                confirmButtonText: '确定'
                             }
-                        ],
-                        series: [{
-                            type: 'bar',
-                            data: counts,
-                            label: {
-                                show: true,
-                                position: 'right',  // 在条形右边显示
-                                formatter: '{c}',   // 显示数据本身
-                                fontSize: 12
-                            }
-                        }]
-                    });
-                }
-                function renderWordCloud(data) {
-                    const el = doc.getElementById('chart-wordcloud');
-                    if (!el) return;
-                    if (!charts.wordcloud) {
-                        charts.wordcloud = ECHARTS.init(el);
-                        charts.wordcloud.on('click', async (params) => {
-                            const keyword = params.name;
-                            const regex = new RegExp(keyword, 'i');
-                            await updateDispDanmakus(
-                                manager.filtered.filter(d => regex.test(d.content)),
-                                { wordcloud: keyword }
-                            );
-                        });
+                        );
+                        return;
                     }
-                    else charts.wordcloud.clear();
-
-                    const freq = {};
-                    data.forEach(d => {
-                        d.content.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ').split(/\s+/).forEach(w => {
-                            if (w.length >= 2) freq[w] = (freq[w] || 0) + 1;
-                        });
-                    });
-                    const list = Object.entries(freq).map(([name, value]) => ({ name, value }));
-                    charts.wordcloud.setOption({
-                        title: { text: '弹幕词云' },
-                        tooltip: {},
-                        series: [{
-                            type: 'wordCloud',
-                            gridSize: 8,
-                            sizeRange: [12, 40],
-                            rotationRange: [0, 0],
-                            shape: 'circle',
-                            data: list
-                        }]
-                    });
-                }
-                function renderDensityChart(data) {
-                    const el = doc.getElementById('chart-density');
-                    if (!el) return;
-                    if (!charts.density) {
-                        charts.density = ECHARTS.init(el);
-                        charts.density.on('click', function (params) {
-                            const targetTime = params.value[0] * 1000;
-                            const list = displayedDanmakus.value;
-                            if (!list.length) return;
-                            // 找到最接近的弹幕 index
-                            let closestIndex = 0;
-                            let minDiff = Math.abs(list[0].progress - targetTime);
-                            for (let i = 1; i < list.length; i++) {
-                                const diff = Math.abs(list[i].progress - targetTime);
-                                if (diff < minDiff) {
-                                    closestIndex = i;
-                                    minDiff = diff;
-                                }
-                            }
-                            // 使用 Element Plus 表格 ref 滚动到该行
-                            nextTick(() => {
-                                const rows = doc.querySelectorAll('.el-table__body-wrapper tbody tr');
-                                const row = rows?.[closestIndex];
-                                if (row) {
-                                    row.scrollIntoView({
-                                        behavior: 'smooth',
-                                        block: 'center'
-                                    });
-                                    const original = row.style.backgroundColor;
-                                    row.style.transition = 'background-color 0.3s ease';
-                                    row.style.backgroundColor = '#ecf5ff';
-                                    setTimeout(() => {
-                                        row.style.backgroundColor = original || '';
-                                    }, 1500);
-                                }
-                            });
-                        });
-
-                    }
-
-                    const duration = videoData.value.duration * 1000; // ms
-                    const minutes = duration / 1000 / 60;
-
-                    // 动态设置 bin 数量
-                    let binCount = 100;
-                    if (minutes <= 10) binCount = 60;
-                    else if (minutes <= 30) binCount = 90;
-                    else if (minutes <= 60) binCount = 60;
-                    else binCount = 30;
-
-                    const bins = new Array(binCount).fill(0);
-                    data.forEach(d => {
-                        const idx = Math.floor((d.progress / duration) * binCount);
-                        bins[Math.min(idx, bins.length - 1)]++;
-                    });
-
-                    const dataPoints = [];
-                    for (let i = 0; i < binCount; i++) {
-                        const timeSec = Math.floor((i * duration) / binCount / 1000);
-                        dataPoints.push({
-                            value: [timeSec, bins[i]],
-                            name: formatProgress(timeSec * 1000)
-                        });
-                    }
-
-                    charts.density.setOption({
-                        title: { text: '弹幕密度分布' },
-                        tooltip: {
-                            trigger: 'axis',
-                            formatter: function (params) {
-                                const sec = params[0].value[0];
-                                return `时间段：${formatProgress(sec * 1000)}<br/>弹幕数：${params[0].value[1]}`;
-                            },
-                            axisPointer: {
-                                type: 'line'
-                            }
-                        },
-                        xAxis: {
-                            type: 'value',
-                            name: '时间',
-                            min: 0,
-                            max: Math.ceil(duration / 1000),
-                            axisLabel: {
-                                formatter: val => formatProgress(val * 1000)
-                            }
-                        },
-                        yAxis: {
-                            type: 'value',
-                            name: '弹幕数量'
-                        },
-                        series: [{
-                            data: dataPoints,
-                            type: 'line',
-                            smooth: true,
-                            areaStyle: {} // 可选加背景区域
-                        }]
-                    });
-                }
-                function renderDateChart(data) {
-                    const el = doc.getElementById('chart-date');
-                    if (!el) return;
-                    if (!charts.date) {
-                        charts.date = ECHARTS.init(el);
-                        charts.date.on('click', async (params) => {
-                            const selectedDate = params.name;
-                            await updateDispDanmakus(
-                                manager.filtered.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
-                                { date: selectedDate }
-                            );
-                        });
-                    }
-
-                    const countMap = {};
-                    data.forEach(d => {
-                        const date = formatTime(d.ctime).split(' ')[0];
-                        countMap[date] = (countMap[date] || 0) + 1;
-                    });
-                    // 按日期升序排序
-                    const sorted = Object.entries(countMap).sort((a, b) => new Date(a[0]) - new Date(b[0]));
-                    const x = sorted.map(([date]) => date);
-                    const y = sorted.map(([, count]) => count);
-
-                    const totalDays = x.length;
-                    const startIdx = Math.max(0, totalDays - 30); // 只显示最近30天
-                    charts.date.setOption({
-                        title: { text: '发送日期分布' },
-                        tooltip: {},
-                        xAxis: { type: 'category', data: x },
-                        yAxis: { type: 'value', name: '弹幕数量' },
-                        dataZoom: [
-                            {
-                                type: 'slider',
-                                startValue: startIdx,
-                                endValue: totalDays - 1,
-                                xAxisIndex: 0,
-                                height: 20
-                            }
-                        ],
-                        series: [{ type: 'bar', data: y }]
-                    });
-                }
-                function renderHourChart(data) {
-                    const el = doc.getElementById('chart-hour');
-                    if (!el) return;
-                    if (!charts.hour) {
-                        charts.hour = ECHARTS.init(el);
-                        charts.hour.on('click', async (params) => {
-                            const selectedHour = parseInt(params.name);
-                            await updateDispDanmakus(
-                                manager.filtered.filter(d => {
-                                    const h = new Date(d.ctime * 1000).getHours();
-                                    return h === selectedHour;
-                                }),
-                                { hour: selectedHour }
-                            );
-                        });
-                    }
-
-                    const hours = new Array(24).fill(0);
-                    data.forEach(d => {
-                        const hour = new Date(d.ctime * 1000).getHours();
-                        hours[hour]++;
-                    });
-                    charts.hour.setOption({
-                        title: { text: '发送时间分布' },
-                        tooltip: {},
-                        xAxis: { type: 'category', data: hours.map((_, i) => i + '时') },
-                        yAxis: { type: 'value', name: '弹幕数量' },
-                        series: [{ type: 'bar', data: hours }]
-                    });
-                }
-                function updateChart() {
-                    const stats = manager.getStats();
-                    danmakuCount.value = { user: stats.length, dm: displayedDanmakus.value.length };
-                    renderUserChart(stats);
-                    renderDensityChart(manager.filtered);
-                    renderWordCloud(manager.filtered);
-                    renderDateChart(manager.filtered);
-                    renderHourChart(manager.filtered);
-                }
-
-                function handleRowClick(row) {
-                    if (!charts.user) return;
-
-                    let el = doc.getElementById('wrapper-chart');
-                    if (!el) return;
-                    while (el && el !== doc.body) {
-                        //寻找可以滚动的父级元素
-                        const overflowY = getComputedStyle(el).overflowY;
-                        const canScroll = overflowY === 'scroll' || overflowY === 'auto';
-                        if (canScroll && el.scrollHeight > el.clientHeight) {
-                            el.scrollTo({ top: 0, behavior: 'smooth' });
-                            break;
-                        }
-                        el = el.parentElement;
-                    }
-
-                    const userMid = row.midHash;
-                    const option = charts.user.getOption();
-
-                    const sc = isExpandedUserChart.value ? 20 : 8;
-                    const scup = isExpandedUserChart.value ? 9 : 3;
-                    const index = option.yAxis[0].data.indexOf(userMid);
+                    const sc = charts.user.expandedH ? 20 : 8;
+                    const scup = charts.user.expandedH ? 9 : 3;
                     if (index >= 0) {
-                        charts.user.setOption({
+                        charts.user.instance.setOption({
                             yAxis: {
                                 axisLabel: {
                                     formatter: function (value) {
-                                        if (value === userMid) {
+                                        if (value === midHash) {
                                             return '{a|' + value + '}';
                                         } else {
                                             return value;
@@ -642,16 +623,47 @@
                             }]
                         });
                     }
+                    ELEMENT_PLUS.ElMessage.success(`已定位到用户 ${midHash}`);
                 }
-                async function updateDispDanmakus(data, text, ifchart) {
+                function handleRowClick(row) {
+                    let el = doc.getElementById('wrapper-chart');
+                    if (!el) return;
+                    while (el && el !== doc.body) {
+                        //寻找可以滚动的父级元素
+                        const overflowY = getComputedStyle(el).overflowY;
+                        const canScroll = overflowY === 'scroll' || overflowY === 'auto';
+                        if (canScroll && el.scrollHeight > el.clientHeight) {
+                            el.scrollTo({ top: 0, behavior: 'smooth' });
+                            break;
+                        }
+                        el = el.parentElement;
+                    }
+
+                    locateUserInChart(row.midHash);
+                }
+                function promptLocateUser() {
+                    ELEMENT_PLUS.ElMessageBox.prompt('请输入要定位的 midHash 用户 ID：', '定位用户', {
+                        confirmButtonText: '定位',
+                        cancelButtonText: '取消',
+                        inputPattern: /^[a-fA-F0-9]{8}$/,
+                        inputErrorMessage: '请输入正确的 midHash（十六进制格式）'
+                    }).then(({ value }) => {
+                        locateUserInChart(value.trim());
+                    }).catch(() => { /* 用户取消 */ });
+                }
+
+                async function updateDispDanmakus(data, subFilt, ifchart) {
                     loading.value = true;
                     await nextTick();
                     await new Promise(resolve => setTimeout(resolve, 10)); //等待v-loading渲染
                     try {
                         displayedDanmakus.value = data;
-                        currentSubFilt.value = text;
+                        currentSubFilt.value = subFilt;
+                        danmakuCount.value = { user: manager.stats.length, dm: displayedDanmakus.value.length };
                         if (ifchart) {
-                            updateChart();
+                            for (const chart of visibleCharts.value) {
+                                renderChart(chart);
+                            }
                         }
                         await nextTick();
                     } catch (err) {
@@ -761,17 +773,18 @@
                     currentFilt,
                     currentSubFilt,
                     loading,
-                    isExpandedUserChart,
                     isTableVisible,
                     isTableAutoH,
                     panelInfo,
                     visibleCharts,
                     chartHover,
+                    expandChart,
                     moveChartUp,
                     moveChartDown,
                     moveChartOut,
                     midHashOnClick,
                     handleRowClick,
+                    promptLocateUser,
                     clearSubFilter,
                     formatProgress,
                     formatCtime,
@@ -1032,7 +1045,7 @@
             <div id="wrapper-chart" style="min-width: 400px;">
                 <div v-for="(chart, index) in visibleCharts" :key="chart" :style="{
                   position: 'relative',
-                  marginBottom: index < visibleCharts.length - 1 ? '10px' : '0'
+                  marginBottom: index < visibleCharts.length - 1 ? '20px' : '0'
                 }" @mouseenter="chartHover = chart" @mouseleave="chartHover = null">
                     <!-- 控制按钮 -->
                     <div v-if="chartHover === chart" :style="{
@@ -1045,6 +1058,22 @@
                       zIndex: 10,
                       transition: 'opacity 0.2s'
                     }">
+                        <el-button v-if="chart === 'user'" size="small" circle @click="promptLocateUser" :style="{
+                      backgroundColor: 'rgba(128,128,128,0.4)',
+                      color: 'white',
+                      fontWeight: 'bold'
+                    }">
+                            ⚲
+                        </el-button>
+                        <span></span>
+                        <el-button size="small" circle @click="expandChart(chart)" :style="{
+                      backgroundColor: 'rgba(128,128,128,0.4)',
+                      color: 'white',
+                      fontWeight: 'bold'
+                    }">
+                            ⇕
+                        </el-button>
+                        <span></span>
                         <el-button size="small" circle @click="moveChartUp(chart)" :style="{
                       backgroundColor: 'rgba(128,128,128,0.4)',
                       color: 'white',
@@ -1660,12 +1689,15 @@
     }
     // 打开新标签页弹幕统计面板
     function openPanelInNewTab() {
+        let bTitle = 'Bilibili';
+        if (dmUtils.bvid) bTitle = dmUtils.bvid;
+        else if (dmUtils.epid) bTitle = 'ep' + dmUtils.epid;
         const htmlContent = `
         <!DOCTYPE html>
         <html lang="zh">
         <head>
         <meta charset="UTF-8">
-        <title>Bilibili 弹幕统计</title>
+        <title>${bTitle} 弹幕统计</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             html, body {
@@ -1679,7 +1711,7 @@
             ${initIframeApp.toString()}
             ${BiliDanmakuUtils.toString()}
             ${BiliMidHashConverter.toString()}
-            let dmUtils = new BiliDanmakuUtils();
+            const dmUtils = new BiliDanmakuUtils();
             window.addEventListener('message', function(event) {
                 Object.assign(dmUtils, event.data);
                 if (!dmUtils.danmakuData) {
@@ -1734,12 +1766,15 @@
     }
     // 保存弹幕统计面板
     function savePanel() {
+        let bTitle = 'Bilibili';
+        if (dmUtils.bvid) bTitle = dmUtils.bvid;
+        else if (dmUtils.epid) bTitle = 'ep' + dmUtils.epid;
         const htmlContent = `
         <!DOCTYPE html>
         <html lang="zh">
         <head>
         <meta charset="UTF-8">
-        <title>Bilibili 弹幕统计</title>
+        <title>${bTitle} 弹幕统计</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             html, body {
@@ -1783,10 +1818,7 @@
         const blobUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = blobUrl;
-        let filename = '';
-        if (dmUtils.bvid) filename = dmUtils.bvid;
-        if (dmUtils.epid) filename = 'ep' + dmUtils.epid;
-        link.download = `${filename}_danmaku_statistics.html`;
+        link.download = `${bTitle}_danmaku_statistics.html`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
