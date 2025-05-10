@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.6.5
+// @version      1.7.0
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -50,7 +50,7 @@
         doc.body.appendChild(appRoot);
 
         // 挂载Vue
-        const { createApp, ref, onMounted, nextTick } = win.Vue;
+        const { createApp, ref, onMounted, nextTick, h } = win.Vue;
         const ELEMENT_PLUS = win.ElementPlus;
         const ECHARTS = win.echarts;
         const app = createApp({
@@ -58,24 +58,34 @@
                 const converter = new BiliMidHashConverter();
                 const displayedDanmakus = ref([]);
                 const filterText = ref('^(哈|呵|h|ha|H|HA|233+)+$');
-                const originDanmakuCount = ref(0);
                 const currentFilt = ref('');
                 const currentSubFilt = ref({});
-                const danmakuCount = ref({ user: 0, dm: 0 });
+                const subFiltHistory = ref([]);
+                const danmakuCount = ref({ origin: 0, filtered: 0 });
                 const videoData = ref(dataParam.videoData || {});
                 const isTableVisible = ref(true);
                 const isTableAutoH = ref(false);
                 const loading = ref(true);
                 const panelInfo = ref(panelInfoParam);
-                const visibleCharts = ref(['user', 'wordcloud', 'density', 'date', 'hour']);
+                const visibleCharts = ref(['user', 'wordcloud', 'density', 'date', 'hour', 'pool']);
                 const chartHover = ref(null);
-                let manager = null;
+                const danmakuList = {
+                    original: [],
+                    filtered: [],
+                    current: []
+                };
                 const charts = {
                     user: {
                         instance: null,
                         expandedH: false,
-                        render() {
-                            const stats = manager.stats;
+                        render(data) {
+                            const countMap = {};
+                            for (const d of data) {
+                                countMap[d.midHash] = (countMap[d.midHash] || 0) + 1;
+                            }
+                            const stats = Object.entries(countMap)
+                                .map(([user, count]) => ({ user, count }))
+                                .sort((a, b) => b.count - a.count);
                             const userNames = stats.map(item => item.user);
                             const counts = stats.map(item => item.count);
                             const maxCount = Math.max(...counts);
@@ -84,7 +94,7 @@
 
                             this.instance.setOption({
                                 tooltip: {},
-                                title: { text: '用户弹幕统计' },
+                                title: { text: '用户弹幕统计', subtext: `共 ${userNames.length} 位用户` },
                                 grid: { left: 100 },
                                 xAxis: {
                                     type: 'value',
@@ -121,16 +131,28 @@
                         async onClick(params) {
                             const selectedUser = params.name;
                             await updateDispDanmakus(
-                                manager.filtered.filter(d => d.midHash === selectedUser),
-                                { user: selectedUser }
+                                false,
+                                danmakuList.filtered.filter(d => d.midHash === selectedUser),
+                                {
+                                    chart: 'user',
+                                    value: selectedUser,
+                                    labelVNode: (h) => h('span', [
+                                        '用户',
+                                        h(ELEMENT_PLUS.ElLink, {
+                                            type: 'primary',
+                                            onClick: () => midHashOnClick(selectedUser),
+                                            style: 'vertical-align: baseline;'
+                                        }, selectedUser),
+                                        '发送'
+                                    ])
+                                }
                             );
                         }
                     },
                     wordcloud: {
                         instance: null,
                         expandedH: false,
-                        render() {
-                            const data = manager.filtered;
+                        render(data) {
                             const freq = {};
                             data.forEach(d => {
                                 d.content.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ').split(/\s+/).forEach(w => {
@@ -155,16 +177,27 @@
                             const keyword = params.name;
                             const regex = new RegExp(keyword, 'i');
                             await updateDispDanmakus(
-                                manager.filtered.filter(d => regex.test(d.content)),
-                                { wordcloud: keyword }
+                                false,
+                                danmakuList.filtered.filter(d => regex.test(d.content)),
+                                {
+                                    chart: 'wordcloud',
+                                    value: keyword,
+                                    labelVNode: (h) => h('span', [
+                                        '包含词语',
+                                        h(ELEMENT_PLUS.ElTag, {
+                                            type: 'info',
+                                            size: 'small',
+                                            style: 'vertical-align: baseline;'
+                                        }, keyword)
+                                    ])
+                                }
                             );
                         }
                     },
                     density: {
                         instance: null,
                         expandedH: false,
-                        render() {
-                            const data = manager.filtered;
+                        render(data) {
                             const duration = videoData.value.duration * 1000; // ms
                             const minutes = duration / 1000 / 60;
 
@@ -259,8 +292,7 @@
                     date: {
                         instance: null,
                         expandedH: false,
-                        render() {
-                            const data = manager.filtered;
+                        render(data) {
                             const countMap = {};
                             data.forEach(d => {
                                 const date = formatTime(d.ctime).split(' ')[0];
@@ -293,16 +325,27 @@
                         async onClick(params) {
                             const selectedDate = params.name;
                             await updateDispDanmakus(
-                                manager.filtered.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
-                                { date: selectedDate }
+                                false,
+                                danmakuList.filtered.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
+                                {
+                                    chart: 'date',
+                                    value: selectedDate,
+                                    labelVNode: (h) => h('span', [
+                                        '日期',
+                                        h(ELEMENT_PLUS.ElTag, {
+                                            type: 'info',
+                                            size: 'small',
+                                            style: 'vertical-align: baseline;'
+                                        }, selectedDate)
+                                    ])
+                                }
                             );
                         }
                     },
                     hour: {
                         instance: null,
                         expandedH: false,
-                        render() {
-                            const data = manager.filtered;
+                        render(data) {
                             const hours = new Array(24).fill(0);
                             data.forEach(d => {
                                 const hour = new Date(d.ctime * 1000).getHours();
@@ -319,41 +362,89 @@
                         async onClick(params) {
                             const selectedHour = parseInt(params.name);
                             await updateDispDanmakus(
-                                manager.filtered.filter(d => {
+                                false,
+                                danmakuList.filtered.filter(d => {
                                     const h = new Date(d.ctime * 1000).getHours();
                                     return h === selectedHour;
                                 }),
-                                { hour: selectedHour }
+                                {
+                                    chart: 'hour',
+                                    value: selectedHour,
+                                    labelVNode: (h) => h('span', [
+                                        '每天',
+                                        h(ELEMENT_PLUS.ElTag, {
+                                            type: 'info',
+                                            size: 'small',
+                                            style: 'vertical-align: baseline;'
+                                        }, selectedHour),
+                                        '点'
+                                    ])
+                                }
+                            );
+                        }
+                    },
+                    pool: {
+                        instance: null,
+                        expandedH: false,
+                        render(data) {
+                            const labelMap = {
+                                0: '普通池',
+                                1: '字幕池',
+                                2: '特殊池',
+                                3: '互动池'
+                            };
+
+                            // 动态统计出现过的 pool 值
+                            const poolMap = {};
+                            data.forEach(d => {
+                                const key = d.pool;
+                                poolMap[key] = (poolMap[key] || 0) + 1;
+                            });
+
+                            const keys = Object.keys(poolMap);
+                            const xData = keys.map(k => labelMap[k] ?? `pool:${k}`);
+                            const yData = keys.map(k => poolMap[k]);
+                            this._poolIndexMap = Object.fromEntries(xData.map((label, i) => [label, Number(keys[i])]));
+
+                            this.instance.setOption({
+                                title: { text: '弹幕池分布' },
+                                tooltip: {},
+                                xAxis: {
+                                    type: 'category',
+                                    data: xData
+                                },
+                                yAxis: {
+                                    type: 'value',
+                                    name: '弹幕数量'
+                                },
+                                series: [{
+                                    type: 'bar',
+                                    data: yData
+                                }]
+                            });
+                        },
+                        async onClick(params) {
+                            const poolLabel = params.name;
+                            const poolVal = this._poolIndexMap?.[poolLabel];
+                            await updateDispDanmakus(
+                                false,
+                                danmakuList.filtered.filter(d => d.pool === poolVal),
+                                {
+                                    chart: 'pool',
+                                    value: poolLabel,
+                                    labelVNode: (h) => h('span', [
+                                        h(ELEMENT_PLUS.ElTag, {
+                                            type: 'info',
+                                            size: 'small',
+                                            style: 'vertical-align: baseline;'
+                                        }, poolLabel)
+                                    ])
+                                }
                             );
                         }
                     }
+
                 };
-                class DanmakuManager {
-                    constructor(danmakuList) {
-                        this.original = [...danmakuList].sort((a, b) => a.progress - b.progress);
-                        this.reset();
-                    }
-
-                    reset() {
-                        this.filtered = [...this.original];
-                        this.stats = this._getStats();
-                    }
-
-                    filter(regex) {
-                        this.filtered = this.original.filter(d => regex.test(d.content));
-                        this.stats = this._getStats();
-                    }
-
-                    _getStats() {
-                        const countMap = {};
-                        for (const d of this.filtered) {
-                            countMap[d.midHash] = (countMap[d.midHash] || 0) + 1;
-                        }
-                        return Object.entries(countMap)
-                            .map(([user, count]) => ({ user, count }))
-                            .sort((a, b) => b.count - a.count);
-                    }
-                }
 
                 function formatProgress(ms) {
                     const s = Math.floor(ms / 1000);
@@ -488,8 +579,7 @@
                     }
                 }
 
-                function midHashOnClick() {
-                    if (!currentSubFilt.value.user) return;
+                function midHashOnClick(midHash) {
                     ELEMENT_PLUS.ElMessageBox.confirm(
                         `是否尝试反查用户ID？
                         <p style="margin-top: 10px; font-size: 12px; color: gray;">
@@ -504,7 +594,7 @@
                         }
                     ).then(() => {
                         // 开始反查用户ID
-                        var result = converter.hashToMid(currentSubFilt.value.user);
+                        var result = converter.hashToMid(midHash);
                         if (result && result !== -1) {
                             ELEMENT_PLUS.ElMessageBox.alert(
                                 `已查到用户ID：
@@ -527,7 +617,7 @@
                     }).catch((err) => {
                         console.error(err);
                         // 用户点击了取消，只复制midHash
-                        navigator.clipboard.writeText(currentSubFilt.value.user).then(() => {
+                        navigator.clipboard.writeText(midHash).then(() => {
                             ELEMENT_PLUS.ElMessage.success('midHash已复制到剪贴板');
                         }).catch(() => {
                             ELEMENT_PLUS.ElMessage.error('复制失败');
@@ -542,9 +632,16 @@
                     if (!charts[chart].instance) {
                         el.style.height = charts[chart].expandedH ? '100%' : '50%';
                         charts[chart].instance = ECHARTS.init(el);
-                        charts[chart].instance.on('click', charts[chart].onClick);
+                        // 防止重复绑定
+                        charts[chart].instance.off('click');
+                        if (typeof charts[chart].onClick === 'function') {
+                            charts[chart].instance.on('click', (params) => {
+                                // 传递this
+                                charts[chart].onClick(params);
+                            });
+                        }
                     }
-                    charts[chart].render();
+                    charts[chart].render(danmakuList.filtered);
                 }
                 function disposeChart(chart) {
                     if (charts[chart].instance && charts[chart].instance.dispose) {
@@ -652,14 +749,15 @@
                     }).catch(() => { /* 用户取消 */ });
                 }
 
-                async function updateDispDanmakus(data, subFilt, ifchart) {
+                async function updateDispDanmakus(ifchart = false, data = danmakuList.filtered, subFilt = {}) {
                     loading.value = true;
                     await nextTick();
                     await new Promise(resolve => setTimeout(resolve, 10)); //等待v-loading渲染
                     try {
-                        displayedDanmakus.value = data;
+                        danmakuList.current = [...data];
+                        displayedDanmakus.value = danmakuList.current;
                         currentSubFilt.value = subFilt;
-                        danmakuCount.value = { user: manager.stats.length, dm: displayedDanmakus.value.length };
+                        danmakuCount.value.filtered = danmakuList.filtered.length;
                         if (ifchart) {
                             for (const chart of visibleCharts.value) {
                                 renderChart(chart);
@@ -674,24 +772,38 @@
                     }
                 }
                 async function clearSubFilter() {
-                    await updateDispDanmakus(manager.filtered, {});
+                    await updateDispDanmakus();
+                }
+                async function commitSubFilter() {
+                    try {
+                        if (Object.keys(currentSubFilt.value).length) {
+                            subFiltHistory.value.push({ ...currentSubFilt.value });
+                        }
+                        danmakuList.filtered = [...danmakuList.current];
+                        await updateDispDanmakus(true);
+                    } catch (e) {
+                        console.error(e);
+                        ELEMENT_PLUS.ElMessage.error('提交子筛选失败');
+                    }
                 }
 
                 async function applyFilter() {
                     try {
+                        subFiltHistory.value = [];
                         const regex = new RegExp(filterText.value, 'i');
-                        manager.filter(regex);
+                        danmakuList.filtered = danmakuList.original.filter(d => regex.test(d.content));
                         currentFilt.value = regex;
-                        await updateDispDanmakus(manager.filtered, {}, true);
+                        await updateDispDanmakus(true);
                     } catch (e) {
                         console.warn(e);
                         alert('无效正则表达式');
                     }
                 }
                 async function resetFilter() {
-                    manager.reset();
+                    subFiltHistory.value = [];
+                    danmakuList.filtered = [...danmakuList.original];
                     currentFilt.value = '';
-                    await updateDispDanmakus(manager.filtered, {}, true);
+                    await updateDispDanmakus(true);
                 }
 
                 onMounted(async () => {
@@ -760,20 +872,22 @@
                             videoData.value.duration = videoData.value.pages[0].duration;
                         }
                     }
-                    manager = new DanmakuManager(dataParam.danmakuData);
-                    originDanmakuCount.value = manager.original.length; // 原始弹幕数量
-                    await updateDispDanmakus(manager.filtered, {}, true);
+                    danmakuList.original = [...dataParam.danmakuData].sort((a, b) => a.progress - b.progress);
+                    danmakuList.filtered = [...danmakuList.original];
+                    danmakuCount.value.origin = danmakuList.original.length;
+                    await updateDispDanmakus(true);
                 });
                 return {
+                    h,
                     displayedDanmakus,
                     filterText,
                     applyFilter,
                     resetFilter,
                     videoData,
                     danmakuCount,
-                    originDanmakuCount,
                     currentFilt,
                     currentSubFilt,
+                    subFiltHistory,
                     loading,
                     isTableVisible,
                     isTableAutoH,
@@ -788,6 +902,7 @@
                     handleRowClick,
                     promptLocateUser,
                     clearSubFilter,
+                    commitSubFilter,
                     formatProgress,
                     formatCtime,
                     formatTime,
@@ -890,7 +1005,7 @@
                     <el-link v-if="videoData.owner"
                         :href="'https://api.bilibili.com/x/v1/dm/list.so?oid=' + videoData.cid" target="_blank"
                         type="primary" style="vertical-align: baseline;" title="下载弹幕">
-                        {{ originDanmakuCount }}
+                        {{ danmakuCount.origin }}
                     </el-link>
                     条
                 </p>
@@ -902,37 +1017,31 @@
                     color: #333;
                 ">
                     <template v-if="currentFilt">
-                        筛选：<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentFilt
-                            }}</el-tag><br />
+                        筛选：
+                        <el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentFilt }}</el-tag>
+                        <br />
                     </template>
-                    共有 {{ danmakuCount.user }} 位不同用户发送了 {{ danmakuCount.dm }} 条弹幕<br />
-                    <template v-if="Object.keys(currentSubFilt).length">
-                        <template v-if="currentSubFilt.user">
-                            用户<el-link type="primary" @click="midHashOnClick" style="vertical-align: baseline;">{{
-                                currentSubFilt.user }}</el-link>发送
-                        </template>
-                        <template v-else-if="currentSubFilt.wordcloud">
-                            含词语<el-tag type="info" size="small" style="vertical-align: baseline;">{{
-                                currentSubFilt.wordcloud }}</el-tag>
-                        </template>
-                        <template v-else-if="currentSubFilt.date">
-                            日期<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentSubFilt.date
-                                }}</el-tag>
-                        </template>
-                        <template v-else-if="currentSubFilt.hour">
-                            每天<el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentSubFilt.hour
-                                }}</el-tag>点
-                        </template>
+                    <template v-if="subFiltHistory.length" style="margin-top: 10px;">
+                        <span v-for="(item, idx) in subFiltHistory" :key="idx" style="margin-right: 6px;">
+                            ✔
+                            <component :is="item.labelVNode(h)" /><br />
+                        </span>
+                    </template>
+                    结果：共有 {{ danmakuCount.filtered }} 条弹幕<br />
+                    <template v-if="currentSubFilt.labelVNode">
+                        <component :is="currentSubFilt.labelVNode(h)" />
                         弹幕共 {{ displayedDanmakus.length }} 条
-                        <el-tag type="info" size="small" effect="light" round @click="clearSubFilter" style="
-                            width: 18px;
-                            height: 18px;
-                            padding: 0;
-                            vertical-align: baseline;
-                            cursor: pointer;
-                        " title="清除子筛选">
+                        <el-tag type="info" size="small" effect="light" round
+                            style="margin-left: 4px; vertical-align: baseline; cursor: pointer; "
+                            @click="clearSubFilter" title="清除子筛选">
                             ×
                         </el-tag>
+                        <el-tag type="warning" size="small" effect="light" round
+                            style="margin-left: 4px; vertical-align: baseline; cursor: pointer; "
+                            @click="commitSubFilter" title="提交子筛选结果作为新的数据源">
+                            ✔
+                        </el-tag>
+
 
                     </template>
                 </p>
@@ -997,7 +1106,7 @@
                 <el-input v-model="filterText" placeholder="请输入正则表达式"
                     style="flex: 1 1 200px; min-width: 150px;"></el-input>
                 <span></span>
-                <template v-if="displayedDanmakus.length == originDanmakuCount">
+                <template v-if="displayedDanmakus.length == danmakuCount.origin">
                     <el-button @click="applyFilter" type="warning">筛选</el-button>
                     <span></span>
                     <el-button @click="resetFilter">取消筛选</el-button>
