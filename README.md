@@ -25,6 +25,7 @@
 - 10位数以上的用户id很可能查不到或查错 [UID讲解](https://www.bilibili.com/opus/921946620241641476)。
 - 关于屏蔽等级：低于用户设定等级的弹幕将被屏蔽，也就是说屏蔽等级越低越容易被屏蔽。
 - 关于条形图滑动条拖动问题：拖动滑轨上的滑条是缩放该轴，拖动突出来的滑条才是滚动该轴。
+- 剧集只支持epid（`https://www.bilibili.com/bangumi/play/ep${id}`），不支持ssid（`https://www.bilibili.com/bangumi/play/ss${id}`）。因为ssid的链接是整季剧集，同样的ssid每个人看的剧集可能不一样。如果打开是ssid的链接，可以右边选集处点同一集，就会跳转epid的剧集了（还没出来按钮就刷新一下）。
 
 
 ### 感谢
