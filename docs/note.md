@@ -78,3 +78,20 @@ iframe创建后里面是空的html，`initIframeApp`首先把引用的css和js�
 > 比如template右半边，`el-main`有高度，`<div id="wrapper-chart">`高度auto，里面的每个图表`height: 50%`，那这个高度是不定的。
 >
 > 但是放进iframe里就是正常显示的，图表`height: 50%`也不知道按什么地方算的，和el-main高度的一半比较接近。另外iframe得设置`position = 'fixed'`,不然高度也是错的。太复杂懒得纠结了。
+
+---
+新增
+```js
+BiliMidHashConverter;   //计算mid的crc32 hash
+initUserIframeApp;  //渲染用户空间页面
+BiliDanmakuUtils.getUserCardData //获取用户名片信息
+BiliDanmakuUtils.getEpisodeData //获取剧集信息
+```
+
+`BiliMidHashConverter`为原本`biliCrc2Mid`改过来的，除了原本的反查mid，还增加了mid转hash方法。
+
+因为新增了在`space.bilibili.com`页面查看用户信息功能，所以新增函数`initUserIframeApp`渲染此面板，在`openPanel`处判断url，以此决定调用`initIframeApp`还是`initUserIframeApp`。数据从[用户名片信息api](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/user/info.md#%E7%94%A8%E6%88%B7%E5%90%8D%E7%89%87%E4%BF%A1%E6%81%AF)获取。
+
+此外新增了支持剧集弹幕统计。从[剧集基本信息api](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/bangumi/info.md#%E8%8E%B7%E5%8F%96%E5%89%A7%E9%9B%86%E6%98%8E%E7%BB%86web%E7%AB%AFssidepid%E6%96%B9%E5%BC%8F)处获取数据，获取到的是整部剧的数据，需要根据epid找到对应的剧集。`episodes[]`里面是正片，`section[].episodes[]`里面是非正片内容。比如`section[].title='花絮'`，`section[].episodes[]`里就是花絮剧集。
+
+> 由于懒得改动其他代码，故在`onMounted`挂载时把剧集信息塞进了`videoData`。
