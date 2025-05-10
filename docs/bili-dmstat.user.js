@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.6.4
+// @version      1.6.5
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -708,12 +708,15 @@
                         let sectionTitle = null;
                         if (Array.isArray(dataParam.episodeData.episodes)) {
                             ep = dataParam.episodeData.episodes.find(e => e.ep_id === dataParam.epid || e.id === dataParam.epid);
+                            if (ep) {
+                                sectionTitle = ep.show_title;
+                            }
                         }
                         if (!ep && Array.isArray(dataParam.episodeData.section)) {
                             for (const section of dataParam.episodeData.section) {
                                 ep = section.episodes?.find(e => e.ep_id === dataParam.epid || e.id === dataParam.epid);
                                 if (ep) {
-                                    sectionTitle = section.title;
+                                    sectionTitle = section.title + '：' + ep.show_title;
                                     break;
                                 }
                             }
@@ -734,12 +737,11 @@
                                 },
                                 pubdate: ep.pub_time,
                                 stat: {
-                                    view: ep.stat?.play,
-                                    danmaku: ep.stat?.danmakus,
-                                    reply: ep.stat?.reply,
-                                    coin: ep.stat?.coin,
-                                    like: ep.stat?.likes,
-                                    vt: ep.stat?.vt
+                                    view: ep.stat?.play || dataParam.episodeData.stat.views,
+                                    danmaku: ep.stat?.danmakus || dataParam.episodeData.stat.danmakus,
+                                    reply: ep.stat?.reply || dataParam.episodeData.stat.reply,
+                                    coin: ep.stat?.coin || dataParam.episodeData.stat.coins,
+                                    like: ep.stat?.likes || dataParam.episodeData.stat.likes,
                                 }
                             });
                         }
