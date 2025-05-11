@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.7.0
+// @version      1.7.1
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -1032,12 +1032,12 @@
                         <component :is="currentSubFilt.labelVNode(h)" />
                         弹幕共 {{ displayedDanmakus.length }} 条
                         <el-tag type="info" size="small" effect="light" round
-                            style="margin-left: 4px; vertical-align: baseline; cursor: pointer; "
+                            style="margin-left: 4px; vertical-align: baseline; cursor: pointer; aspect-ratio: 1/1; padding: 0;"
                             @click="clearSubFilter" title="清除子筛选">
                             ×
                         </el-tag>
-                        <el-tag type="warning" size="small" effect="light" round
-                            style="margin-left: 4px; vertical-align: baseline; cursor: pointer; "
+                        <el-tag type="success" size="small" effect="light" round
+                            style="margin-left: 4px; vertical-align: baseline; cursor: pointer; aspect-ratio: 1/1; padding: 0;"
                             @click="commitSubFilter" title="提交子筛选结果作为新的数据源">
                             ✔
                         </el-tag>
