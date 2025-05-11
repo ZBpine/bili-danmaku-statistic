@@ -16,6 +16,7 @@
 9. 可在用户主页空间查看midHash，然后在用户弹幕统计定位用户。
 10. 可转为[长条图片](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example02.png)，截长图前可自由调整图表顺序/关闭图表/收起弹幕列表。
 11. 可下载html文件至本地。先新标签页打开，再点击保存。下载至本地后所有图表的交互都保留。
+12. 可添加自定义图表，详见：[添加自定义图表](https://github.com/ZBpine/bili-danmaku-statistic/blob/main/docs/addchart.md)
 
 ![图片01](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example01.png)
 
@@ -67,4 +68,4 @@
 **版本1.7**
 - 增加弹幕池统计图
 - 增加提交子筛选功能
-- 增加动态新增统计图功能
+- 增加动态添加自定义统计图功能
