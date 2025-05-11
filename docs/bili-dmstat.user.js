@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.7.1
+// @version      1.7.2
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -67,13 +67,6 @@
                 const isTableAutoH = ref(false);
                 const loading = ref(true);
                 const panelInfo = ref(panelInfoParam);
-                const visibleCharts = ref(['user', 'wordcloud', 'density', 'date', 'hour', 'pool']);
-                const chartHover = ref(null);
-                const danmakuList = {
-                    original: [],
-                    filtered: [],
-                    current: []
-                };
                 const charts = {
                     user: {
                         instance: null,
@@ -128,11 +121,10 @@
                                 }]
                             });
                         },
-                        async onClick(params) {
+                        async onClick({ params, data, applySubFilter }) {
                             const selectedUser = params.name;
-                            await updateDispDanmakus(
-                                false,
-                                danmakuList.filtered.filter(d => d.midHash === selectedUser),
+                            await applySubFilter(
+                                data.filter(d => d.midHash === selectedUser),
                                 {
                                     chart: 'user',
                                     value: selectedUser,
@@ -173,12 +165,11 @@
                                 }]
                             });
                         },
-                        async onClick(params) {
+                        async onClick({ params, data, applySubFilter }) {
                             const keyword = params.name;
                             const regex = new RegExp(keyword, 'i');
-                            await updateDispDanmakus(
-                                false,
-                                danmakuList.filtered.filter(d => regex.test(d.content)),
+                            await applySubFilter(
+                                data.filter(d => regex.test(d.content)),
                                 {
                                     chart: 'wordcloud',
                                     value: keyword,
@@ -196,7 +187,6 @@
                     },
                     density: {
                         instance: null,
-                        expandedH: false,
                         render(data) {
                             const duration = videoData.value.duration * 1000; // ms
                             const minutes = duration / 1000 / 60;
@@ -256,7 +246,7 @@
                                 }]
                             });
                         },
-                        async onClick(params) {
+                        async onClick({ params }) {
                             const targetTime = params.value[0] * 1000;
                             const list = displayedDanmakus.value;
                             if (!list.length) return;
@@ -291,7 +281,6 @@
                     },
                     date: {
                         instance: null,
-                        expandedH: false,
                         render(data) {
                             const countMap = {};
                             data.forEach(d => {
@@ -322,11 +311,10 @@
                                 series: [{ type: 'bar', data: y }]
                             });
                         },
-                        async onClick(params) {
+                        async onClick({ params, data, applySubFilter }) {
                             const selectedDate = params.name;
-                            await updateDispDanmakus(
-                                false,
-                                danmakuList.filtered.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
+                            await applySubFilter(
+                                data.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
                                 {
                                     chart: 'date',
                                     value: selectedDate,
@@ -344,7 +332,6 @@
                     },
                     hour: {
                         instance: null,
-                        expandedH: false,
                         render(data) {
                             const hours = new Array(24).fill(0);
                             data.forEach(d => {
@@ -359,11 +346,10 @@
                                 series: [{ type: 'bar', data: hours }]
                             });
                         },
-                        async onClick(params) {
+                        async onClick({ params, data, applySubFilter }) {
                             const selectedHour = parseInt(params.name);
-                            await updateDispDanmakus(
-                                false,
-                                danmakuList.filtered.filter(d => {
+                            await applySubFilter(
+                                data.filter(d => {
                                     const h = new Date(d.ctime * 1000).getHours();
                                     return h === selectedHour;
                                 }),
@@ -423,12 +409,11 @@
                                 }]
                             });
                         },
-                        async onClick(params) {
+                        async onClick({ params, data, applySubFilter }) {
                             const poolLabel = params.name;
                             const poolVal = this._poolIndexMap?.[poolLabel];
-                            await updateDispDanmakus(
-                                false,
-                                danmakuList.filtered.filter(d => d.pool === poolVal),
+                            await applySubFilter(
+                                data.filter(d => d.pool === poolVal),
                                 {
                                     chart: 'pool',
                                     value: poolLabel,
@@ -443,7 +428,14 @@
                             );
                         }
                     }
-
+                };
+                const chartsVisible = ref(Object.keys(charts));
+                const chartsExpandable = ref(Object.keys(charts).filter(key => 'expandedH' in charts[key]));
+                const chartHover = ref(null);
+                const danmakuList = {
+                    original: [],
+                    filtered: [],
+                    current: []
                 };
 
                 function formatProgress(ms) {
@@ -632,12 +624,15 @@
                     if (!charts[chart].instance) {
                         el.style.height = charts[chart].expandedH ? '100%' : '50%';
                         charts[chart].instance = ECHARTS.init(el);
-                        // 防止重复绑定
                         charts[chart].instance.off('click');
                         if (typeof charts[chart].onClick === 'function') {
                             charts[chart].instance.on('click', (params) => {
-                                // 传递this
-                                charts[chart].onClick(params);
+                                charts[chart].onClick({
+                                    params,
+                                    data: danmakuList.filtered,
+                                    applySubFilter: (list, subFilt) => updateDispDanmakus(false, list, subFilt),
+                                    ELEMENT_PLUS
+                                });
                             });
                         }
                     }
@@ -655,23 +650,23 @@
                     renderChart(chart);
                 }
                 function moveChartUp(chart) {
-                    const idx = visibleCharts.value.indexOf(chart);
+                    const idx = chartsVisible.value.indexOf(chart);
                     if (idx > 0) {
-                        visibleCharts.value.splice(idx, 1);
-                        visibleCharts.value.splice(idx - 1, 0, chart);
+                        chartsVisible.value.splice(idx, 1);
+                        chartsVisible.value.splice(idx - 1, 0, chart);
                     }
                 }
                 function moveChartDown(chart) {
-                    const idx = visibleCharts.value.indexOf(chart);
-                    if (idx < visibleCharts.value.length - 1) {
-                        visibleCharts.value.splice(idx, 1);
-                        visibleCharts.value.splice(idx + 1, 0, chart);
+                    const idx = chartsVisible.value.indexOf(chart);
+                    if (idx < chartsVisible.value.length - 1) {
+                        chartsVisible.value.splice(idx, 1);
+                        chartsVisible.value.splice(idx + 1, 0, chart);
                     }
                 }
                 function moveChartOut(chart) {
-                    const idx = visibleCharts.value.indexOf(chart);
+                    const idx = chartsVisible.value.indexOf(chart);
                     if (idx !== -1) {
-                        visibleCharts.value.splice(idx, 1);
+                        chartsVisible.value.splice(idx, 1);
                         disposeChart(chart);
                     }
                 }
@@ -742,7 +737,7 @@
                     ELEMENT_PLUS.ElMessageBox.prompt('请输入要定位的 midHash 用户 ID：', '定位用户', {
                         confirmButtonText: '定位',
                         cancelButtonText: '取消',
-                        inputPattern: /^[a-fA-F0-9]{8}$/,
+                        inputPattern: /^[a-fA-F0-9]{5,}$/,
                         inputErrorMessage: '请输入正确的 midHash（十六进制格式）'
                     }).then(({ value }) => {
                         locateUserInChart(value.trim());
@@ -759,7 +754,7 @@
                         currentSubFilt.value = subFilt;
                         danmakuCount.value.filtered = danmakuList.filtered.length;
                         if (ifchart) {
-                            for (const chart of visibleCharts.value) {
+                            for (const chart of chartsVisible.value) {
                                 renderChart(chart);
                             }
                         }
@@ -805,6 +800,7 @@
                     currentFilt.value = '';
                     await updateDispDanmakus(true);
                 }
+
 
                 onMounted(async () => {
                     if ((!dataParam?.videoData && !dataParam?.episodeData) || !Array.isArray(dataParam?.danmakuData)) {
@@ -876,6 +872,29 @@
                     danmakuList.filtered = [...danmakuList.original];
                     danmakuCount.value.origin = danmakuList.original.length;
                     await updateDispDanmakus(true);
+
+                    window.addCustomChart = function (chartName, chartDef) {
+                        if (!chartName || typeof chartDef !== 'object') {
+                            console.warn('chartName 必须为字符串，chartDef 必须为对象');
+                            return;
+                        }
+                        if (charts[chartName]) {
+                            console.warn(`图表 "${chartName}" 已存在`);
+                            return;
+                        }
+                        charts[chartName] = {
+                            instance: null,
+                            ...chartDef
+                        };
+                        chartsVisible.value.push(chartName);
+                        if ('expandedH' in charts[chartName]) {
+                            chartsExpandable.value.push(chartName);
+                        }
+                        nextTick(() => {
+                            renderChart(chartName);
+                        });
+                        console.log(`✅ 已添加图表 "${chartName}"，请在界面查看`);
+                    };
                 });
                 return {
                     h,
@@ -892,7 +911,8 @@
                     isTableVisible,
                     isTableAutoH,
                     panelInfo,
-                    visibleCharts,
+                    chartsVisible,
+                    chartsExpandable,
                     chartHover,
                     expandChart,
                     moveChartUp,
@@ -1154,9 +1174,9 @@
         </el-header>
         <el-main style="overflow-y: auto;">
             <div id="wrapper-chart" style="min-width: 400px;">
-                <div v-for="(chart, index) in visibleCharts" :key="chart" :style="{
+                <div v-for="(chart, index) in chartsVisible" :key="chart" :style="{
                   position: 'relative',
-                  marginBottom: index < visibleCharts.length - 1 ? '20px' : '0'
+                  marginBottom: index < chartsVisible.length - 1 ? '20px' : '0'
                 }" @mouseenter="chartHover = chart" @mouseleave="chartHover = null">
                     <!-- 控制按钮 -->
                     <div v-if="chartHover === chart" :style="{
@@ -1177,14 +1197,16 @@
                             ⚲
                         </el-button>
                         <span></span>
-                        <el-button size="small" circle @click="expandChart(chart)" :style="{
+                        <template v-if="chartsExpandable.includes(chart)">
+                            <el-button size="small" circle @click="expandChart(chart)" :style="{
                       backgroundColor: 'rgba(128,128,128,0.4)',
                       color: 'white',
                       fontWeight: 'bold'
                     }">
-                            ⇕
-                        </el-button>
-                        <span></span>
+                                ⇕
+                            </el-button>
+                            <span></span>
+                        </template>
                         <el-button size="small" circle @click="moveChartUp(chart)" :style="{
                       backgroundColor: 'rgba(128,128,128,0.4)',
                       color: 'white',
