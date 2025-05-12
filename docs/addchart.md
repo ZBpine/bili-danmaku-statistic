@@ -1,6 +1,6 @@
 # 说明
 
-> 最低`1.7.2`版本新增功能`添加自定义图表`
+> 最低`1.7.4`版本新增功能`添加自定义图表`
 
 例如你看到[毕导视频讲本福特定律](https://www.bilibili.com/video/BV1VrVSz1Eme)，于是想统计一下弹幕验证一下：
 ![示例](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example03.png)
