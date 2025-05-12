@@ -68,7 +68,7 @@ addCustomChart('densityRange', {
     },
     clickBuffer: [],
     tempMarkLine: null,
-    async onClick({ params, data, applySubFilter, ELEMENT_PLUS }) {
+    async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
         function formatProgress(ms) {
             const s = Math.floor(ms / 1000);
             const min = String(Math.floor(s / 60)).padStart(2, '0');
@@ -134,20 +134,18 @@ addCustomChart('densityRange', {
             }]
         });
 
-        await applySubFilter(
-            data.filter(d => d.progress >= startMs && d.progress <= endMs),
-            {
-                value: `${formatProgress(startMs)} ~ ${formatProgress(endMs)}`,
-                labelVNode: (h) => h('span', [
-                    '时间段：',
-                    h(ELEMENT_PLUS.ElTag, {
-                        type: 'info',
-                        size: 'small',
-                        style: 'vertical-align: baseline;'
-                    }, `${formatProgress(startMs)} ~ ${formatProgress(endMs)}`)
-                ])
-            }
-        );
+        await applySubFilter({
+            value: `${formatProgress(startMs)} ~ ${formatProgress(endMs)}`,
+            filterFn: (data) => data.filter(d => d.progress >= startMs && d.progress <= endMs),
+            labelVNode: (h) => h('span', [
+                '时间段：',
+                h(ELEMENT_PLUS.ElTag, {
+                    type: 'info',
+                    size: 'small',
+                    style: 'vertical-align: baseline;'
+                }, `${formatProgress(startMs)} ~ ${formatProgress(endMs)}`)
+            ])
+        });
     },
     clearSubFilt() {
         this.instance.setOption({
