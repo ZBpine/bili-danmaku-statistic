@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.7.3
+// @version      1.7.4
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -121,23 +121,21 @@
                                 }]
                             });
                         },
-                        async onClick({ params, data, applySubFilter }) {
+                        async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
                             const selectedUser = params.name;
-                            await applySubFilter(
-                                data.filter(d => d.midHash === selectedUser),
-                                {
-                                    value: selectedUser,
-                                    labelVNode: (h) => h('span', [
-                                        '用户',
-                                        h(ELEMENT_PLUS.ElLink, {
-                                            type: 'primary',
-                                            onClick: () => midHashOnClick(selectedUser),
-                                            style: 'vertical-align: baseline;'
-                                        }, selectedUser),
-                                        '发送'
-                                    ])
-                                }
-                            );
+                            await applySubFilter({
+                                value: selectedUser,
+                                filterFn: (data) => data.filter(d => d.midHash === selectedUser),
+                                labelVNode: (h) => h('span', [
+                                    '用户',
+                                    h(ELEMENT_PLUS.ElLink, {
+                                        type: 'primary',
+                                        onClick: () => midHashOnClick(selectedUser),
+                                        style: 'vertical-align: baseline;'
+                                    }, selectedUser),
+                                    '发送'
+                                ])
+                            });
                         }
                     },
                     wordcloud: {
@@ -164,23 +162,20 @@
                                 }]
                             });
                         },
-                        async onClick({ params, data, applySubFilter }) {
+                        async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
                             const keyword = params.name;
-                            const regex = new RegExp(keyword, 'i');
-                            await applySubFilter(
-                                data.filter(d => regex.test(d.content)),
-                                {
-                                    value: keyword,
-                                    labelVNode: (h) => h('span', [
-                                        '包含词语',
-                                        h(ELEMENT_PLUS.ElTag, {
-                                            type: 'info',
-                                            size: 'small',
-                                            style: 'vertical-align: baseline;'
-                                        }, keyword)
-                                    ])
-                                }
-                            );
+                            await applySubFilter({
+                                value: keyword,
+                                filterFn: (data) => data.filter(d => new RegExp(keyword, 'i').test(d.content)),
+                                labelVNode: (h) => h('span', [
+                                    '包含词语',
+                                    h(ELEMENT_PLUS.ElTag, {
+                                        type: 'info',
+                                        size: 'small',
+                                        style: 'vertical-align: baseline;'
+                                    }, keyword)
+                                ])
+                            });
                         }
                     },
                     density: {
@@ -309,22 +304,20 @@
                                 series: [{ type: 'bar', data: y }]
                             });
                         },
-                        async onClick({ params, data, applySubFilter }) {
+                        async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
                             const selectedDate = params.name;
-                            await applySubFilter(
-                                data.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
-                                {
-                                    value: selectedDate,
-                                    labelVNode: (h) => h('span', [
-                                        '日期',
-                                        h(ELEMENT_PLUS.ElTag, {
-                                            type: 'info',
-                                            size: 'small',
-                                            style: 'vertical-align: baseline;'
-                                        }, selectedDate)
-                                    ])
-                                }
-                            );
+                            await applySubFilter({
+                                value: selectedDate,
+                                filterFn: (data) => data.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
+                                labelVNode: (h) => h('span', [
+                                    '日期',
+                                    h(ELEMENT_PLUS.ElTag, {
+                                        type: 'info',
+                                        size: 'small',
+                                        style: 'vertical-align: baseline;'
+                                    }, selectedDate)
+                                ])
+                            });
                         }
                     },
                     hour: {
@@ -343,26 +336,21 @@
                                 series: [{ type: 'bar', data: hours }]
                             });
                         },
-                        async onClick({ params, data, applySubFilter }) {
+                        async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
                             const selectedHour = parseInt(params.name);
-                            await applySubFilter(
-                                data.filter(d => {
-                                    const h = new Date(d.ctime * 1000).getHours();
-                                    return h === selectedHour;
-                                }),
-                                {
-                                    value: selectedHour,
-                                    labelVNode: (h) => h('span', [
-                                        '每天',
-                                        h(ELEMENT_PLUS.ElTag, {
-                                            type: 'info',
-                                            size: 'small',
-                                            style: 'vertical-align: baseline;'
-                                        }, selectedHour),
-                                        '点'
-                                    ])
-                                }
-                            );
+                            await applySubFilter({
+                                value: selectedHour,
+                                filterFn: (data) => data.filter(d => new Date(d.ctime * 1000).getHours() === selectedHour),
+                                labelVNode: (h) => h('span', [
+                                    '每天',
+                                    h(ELEMENT_PLUS.ElTag, {
+                                        type: 'info',
+                                        size: 'small',
+                                        style: 'vertical-align: baseline;'
+                                    }, selectedHour),
+                                    '点'
+                                ])
+                            });
                         }
                     },
                     pool: {
@@ -405,22 +393,20 @@
                                 }]
                             });
                         },
-                        async onClick({ params, data, applySubFilter }) {
+                        async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
                             const poolLabel = params.name;
                             const poolVal = this._poolIndexMap?.[poolLabel];
-                            await applySubFilter(
-                                data.filter(d => d.pool === poolVal),
-                                {
-                                    value: poolLabel,
-                                    labelVNode: (h) => h('span', [
-                                        h(ELEMENT_PLUS.ElTag, {
-                                            type: 'info',
-                                            size: 'small',
-                                            style: 'vertical-align: baseline;'
-                                        }, poolLabel)
-                                    ])
-                                }
-                            );
+                            await applySubFilter({
+                                value: poolLabel,
+                                filterFn: (data) => data.filter(d => d.pool === poolVal),
+                                labelVNode: (h) => h('span', [
+                                    h(ELEMENT_PLUS.ElTag, {
+                                        type: 'info',
+                                        size: 'small',
+                                        style: 'vertical-align: baseline;'
+                                    }, poolLabel)
+                                ])
+                            });
                         }
                     }
                 };
@@ -428,9 +414,9 @@
                 const chartsExpandable = ref(Object.keys(charts).filter(key => 'expandedH' in charts[key]));
                 const chartHover = ref(null);
                 const danmakuList = {
-                    original: [],
-                    filtered: [],
-                    current: []
+                    original: [],   //原始
+                    filtered: [],   //正则筛选后
+                    current: []     //子筛选提交后
                 };
 
                 function formatProgress(ms) {
@@ -624,14 +610,19 @@
                             charts[chart].instance.on('click', (params) => {
                                 charts[chart].onClick({
                                     params,
-                                    data: danmakuList.filtered,
-                                    applySubFilter: (list, subFilt) => updateDispDanmakus(false, list, { chart, ...subFilt }),
+                                    data: danmakuList.current,
+                                    applySubFilter: (subFilt) => {
+                                        const list = typeof subFilt.filterFn === 'function'
+                                            ? subFilt.filterFn(danmakuList.current)
+                                            : danmakuList.current;
+                                        return updateDispDanmakus(false, list, { chart, ...subFilt });
+                                    },
                                     ELEMENT_PLUS
                                 });
                             });
                         }
                     }
-                    charts[chart].render(danmakuList.filtered);
+                    charts[chart].render(danmakuList.current);
                 }
                 function disposeChart(chart) {
                     if (charts[chart].instance && charts[chart].instance.dispose) {
@@ -739,15 +730,14 @@
                     }).catch(() => { /* 用户取消 */ });
                 }
 
-                async function updateDispDanmakus(ifchart = false, data = danmakuList.filtered, subFilt = {}) {
+                async function updateDispDanmakus(ifchart = false, data = danmakuList.current, subFilt = {}) {
                     loading.value = true;
                     await nextTick();
                     await new Promise(resolve => setTimeout(resolve, 10)); //等待v-loading渲染
                     try {
-                        danmakuList.current = [...data];
-                        displayedDanmakus.value = danmakuList.current;
+                        displayedDanmakus.value = data;
                         currentSubFilt.value = subFilt;
-                        danmakuCount.value.filtered = danmakuList.filtered.length;
+                        danmakuCount.value.filtered = danmakuList.current.length;
                         if (ifchart) {
                             for (const chart of chartsVisible.value) {
                                 renderChart(chart);
@@ -761,6 +751,32 @@
                         loading.value = false;
                     }
                 }
+                async function applyActiveSubFilters() {
+                    try {
+                        let filtered = danmakuList.filtered;
+                        const activeFilters = subFiltHistory.value.filter(f => f.enabled && typeof f.filterFn === 'function');
+                        for (const filt of activeFilters) {
+                            filtered = filt.filterFn(filtered);
+                        }
+                        danmakuList.current = filtered;
+                        await updateDispDanmakus(true);
+                    } catch (e) {
+                        console.error(e);
+                        ELEMENT_PLUS.ElMessage.error('子筛选应用失败');
+                    }
+                }
+                async function commitSubFilter() {
+                    try {
+                        if (Object.keys(currentSubFilt.value).length) {
+                            subFiltHistory.value.push({ ...currentSubFilt.value, enabled: true });
+                        }
+                        danmakuList.current = [...displayedDanmakus.value];
+                        await updateDispDanmakus(true);
+                    } catch (e) {
+                        console.error(e);
+                        ELEMENT_PLUS.ElMessage.error('提交子筛选失败');
+                    }
+                }
                 async function clearSubFilter() {
                     if (currentSubFilt.value.chart) {
                         const chart = currentSubFilt.value.chart;
@@ -770,24 +786,13 @@
                     }
                     await updateDispDanmakus();
                 }
-                async function commitSubFilter() {
-                    try {
-                        if (Object.keys(currentSubFilt.value).length) {
-                            subFiltHistory.value.push({ ...currentSubFilt.value });
-                        }
-                        danmakuList.filtered = [...danmakuList.current];
-                        await updateDispDanmakus(true);
-                    } catch (e) {
-                        console.error(e);
-                        ELEMENT_PLUS.ElMessage.error('提交子筛选失败');
-                    }
-                }
 
                 async function applyFilter() {
                     try {
                         subFiltHistory.value = [];
                         const regex = new RegExp(filterText.value, 'i');
                         danmakuList.filtered = danmakuList.original.filter(d => regex.test(d.content));
+                        danmakuList.current = [...danmakuList.filtered];
                         currentFilt.value = regex;
                         await updateDispDanmakus(true);
                     } catch (e) {
@@ -798,6 +803,7 @@
                 async function resetFilter() {
                     subFiltHistory.value = [];
                     danmakuList.filtered = [...danmakuList.original];
+                    danmakuList.current = [...danmakuList.filtered];
                     currentFilt.value = '';
                     await updateDispDanmakus(true);
                 }
@@ -871,6 +877,7 @@
                     }
                     danmakuList.original = [...dataParam.danmakuData].sort((a, b) => a.progress - b.progress);
                     danmakuList.filtered = [...danmakuList.original];
+                    danmakuList.current = [...danmakuList.filtered];
                     danmakuCount.value.origin = danmakuList.original.length;
                     await updateDispDanmakus(true);
 
@@ -924,6 +931,7 @@
                     promptLocateUser,
                     clearSubFilter,
                     commitSubFilter,
+                    applyActiveSubFilters,
                     formatProgress,
                     formatCtime,
                     formatTime,
@@ -1044,8 +1052,15 @@
                     </template>
                     <template v-if="subFiltHistory.length" style="margin-top: 10px;">
                         <span v-for="(item, idx) in subFiltHistory" :key="idx" style="margin-right: 6px;">
-                            ✔
-                            <component :is="item.labelVNode(h)" /><br />
+                            <el-checkbox v-model="item.enabled" style="margin-right: 4px;"
+                                @change="applyActiveSubFilters" />
+                            <component :is="item.labelVNode(h)" />
+                            <el-tag type="info" size="small" effect="light" round
+                                style="margin-left: 4px; vertical-align: baseline; cursor: pointer; aspect-ratio: 1/1; padding: 0;"
+                                @click="() => { subFiltHistory.splice(idx, 1); applyActiveSubFilters(); }"
+                                title="清除历史子筛选">
+                                ×
+                            </el-tag><br />
                         </span>
                     </template>
                     结果：共有 {{ danmakuCount.filtered }} 条弹幕<br />
