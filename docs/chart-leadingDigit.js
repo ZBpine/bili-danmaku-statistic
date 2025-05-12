@@ -49,22 +49,19 @@ addCustomChart('leadingDigit', {
             }]
         });
     },
-    async onClick({ params, data, applySubFilter, ELEMENT_PLUS }) {
+    async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
         const selectedDigit = params.name;
-        await applySubFilter(
-            data.filter(d => (d.content.match(/\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit)),
-            {
-                chart: 'leadingDigit',
-                value: selectedDigit,
-                labelVNode: (h) => h('span', [
-                    '首位数字为 ',
-                    h(ELEMENT_PLUS.ElTag, {
-                        type: 'info',
-                        size: 'small',
-                        style: 'vertical-align: baseline;'
-                    }, selectedDigit)
-                ])
-            }
-        );
+        await applySubFilter({
+            value: selectedDigit,
+            filterFn: (data) => data.filter(d => (d.content.match(/\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit)),
+            labelVNode: (h) => h('span', [
+                '首位数字为 ',
+                h(ELEMENT_PLUS.ElTag, {
+                    type: 'info',
+                    size: 'small',
+                    style: 'vertical-align: baseline;'
+                }, selectedDigit)
+            ])
+        });
     }
 });
