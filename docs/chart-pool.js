@@ -38,22 +38,19 @@ addCustomChart('pool', {
             }]
         });
     },
-    async onClick({ params, data, applySubFilter, ELEMENT_PLUS }) {
+    async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
         const poolLabel = params.name;
         const poolVal = this._poolIndexMap?.[poolLabel];
-        await applySubFilter(
-            data.filter(d => d.pool === poolVal),
-            {
-                chart: 'pool',
-                value: poolLabel,
-                labelVNode: (h) => h('span', [
-                    h(ELEMENT_PLUS.ElTag, {
-                        type: 'info',
-                        size: 'small',
-                        style: 'vertical-align: baseline;'
-                    }, poolLabel)
-                ])
-            }
-        );
+        await applySubFilter({
+            value: poolLabel,
+            filterFn: (data) => data.filter(d => d.pool === poolVal),
+            labelVNode: (h) => h('span', [
+                h(ELEMENT_PLUS.ElTag, {
+                    type: 'info',
+                    size: 'small',
+                    style: 'vertical-align: baseline;'
+                }, poolLabel)
+            ])
+        });
     }
 });
