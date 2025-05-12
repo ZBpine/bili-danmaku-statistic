@@ -58,23 +58,20 @@ addCustomChart('leadingDigit', {
             }]
         });
     },
-    async onClick({ params, data, applySubFilter, ELEMENT_PLUS }) {
+    async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
         const selectedDigit = params.name;
-        await applySubFilter(
-            data.filter(d => (d.content.match(/\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit)),
-            {
-                chart: 'leadingDigit',
-                value: selectedDigit,
-                labelVNode: (h) => h('span', [
-                    '首位数字为 ',
-                    h(ELEMENT_PLUS.ElTag, {
-                        type: 'info',
-                        size: 'small',
-                        style: 'vertical-align: baseline;'
-                    }, selectedDigit)
-                ])
-            }
-        );
+        await applySubFilter({
+            value: selectedDigit,
+            filterFn: (data) => data.filter(d => (d.content.match(/\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit)),
+            labelVNode: (h) => h('span', [
+                '首位数字为 ',
+                h(ELEMENT_PLUS.ElTag, {
+                    type: 'info',
+                    size: 'small',
+                    style: 'vertical-align: baseline;'
+                }, selectedDigit)
+            ])
+        });
     }
 });
 ```
@@ -94,7 +91,7 @@ addCustomChart('图表唯一名称', {
         // 用户点击图表元素后触发（可选）
         // params 是 echarts 的点击项参数
         // data 是当前筛选后的弹幕数组
-        // applySubFilter(filteredData, subFilt) 可用于筛选弹幕
+        // applySubFilter(subFilt) 可用于筛选弹幕
         // ELEMENT_PLUS 可用于生成 ElTag、ElLink 等 Element Plus 组件
     }
 });
@@ -102,14 +99,11 @@ addCustomChart('图表唯一名称', {
 
 其中`applySubFilter`
 ```js
-await applySubFilter(
-    filteredData,                    // 将显示到弹幕列表的数据
-    {
-        chart: 'yourChartName',      // （可选）来源图表名
-        value: any,                  // （可选）当前筛选值
-        labelVNode: (h) => VNode     // （必须）筛选说明 UI 标签
-    }
-);
+await applySubFilter({
+    value: any,                  // （可选）当前筛选值
+    filterFn: (data) => data[],  // （必须）对当前弹幕列表 data 进行筛选的函数，返回筛选后的新列表
+    labelVNode: (h) => VNode     // （必须）筛选说明 UI 标签
+});
 ```
 
 data弹幕数组结构如下，参考[xml格式结构](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/danmaku/danmaku_xml.md#xml%E6%A0%BC%E5%BC%8F%E7%BB%93%E6%9E%84)
