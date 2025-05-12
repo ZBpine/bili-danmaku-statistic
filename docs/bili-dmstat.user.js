@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.7.2
+// @version      1.7.3
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -126,7 +126,6 @@
                             await applySubFilter(
                                 data.filter(d => d.midHash === selectedUser),
                                 {
-                                    chart: 'user',
                                     value: selectedUser,
                                     labelVNode: (h) => h('span', [
                                         '用户',
@@ -171,7 +170,6 @@
                             await applySubFilter(
                                 data.filter(d => regex.test(d.content)),
                                 {
-                                    chart: 'wordcloud',
                                     value: keyword,
                                     labelVNode: (h) => h('span', [
                                         '包含词语',
@@ -316,7 +314,6 @@
                             await applySubFilter(
                                 data.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
                                 {
-                                    chart: 'date',
                                     value: selectedDate,
                                     labelVNode: (h) => h('span', [
                                         '日期',
@@ -354,7 +351,6 @@
                                     return h === selectedHour;
                                 }),
                                 {
-                                    chart: 'hour',
                                     value: selectedHour,
                                     labelVNode: (h) => h('span', [
                                         '每天',
@@ -415,7 +411,6 @@
                             await applySubFilter(
                                 data.filter(d => d.pool === poolVal),
                                 {
-                                    chart: 'pool',
                                     value: poolLabel,
                                     labelVNode: (h) => h('span', [
                                         h(ELEMENT_PLUS.ElTag, {
@@ -630,7 +625,7 @@
                                 charts[chart].onClick({
                                     params,
                                     data: danmakuList.filtered,
-                                    applySubFilter: (list, subFilt) => updateDispDanmakus(false, list, subFilt),
+                                    applySubFilter: (list, subFilt) => updateDispDanmakus(false, list, { chart, ...subFilt }),
                                     ELEMENT_PLUS
                                 });
                             });
@@ -767,6 +762,12 @@
                     }
                 }
                 async function clearSubFilter() {
+                    if (currentSubFilt.value.chart) {
+                        const chart = currentSubFilt.value.chart;
+                        if (typeof charts[chart]?.clearSubFilt === 'function') {
+                            charts[chart].clearSubFilt();
+                        }
+                    }
                     await updateDispDanmakus();
                 }
                 async function commitSubFilter() {
