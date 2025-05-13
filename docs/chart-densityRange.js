@@ -1,6 +1,7 @@
 addCustomChart('densityRange', {
     render(data) {
-        const duration = Math.max(...data.map(d => d.progress)) || 0;
+        const { formatProgress, videoData } = this.ctx;
+        const duration = videoData.value.duration * 1000;
         const minutes = duration / 1000 / 60;
 
         // 动态设置 bin 数量
@@ -16,12 +17,6 @@ addCustomChart('densityRange', {
             bins[Math.min(idx, bins.length - 1)]++;
         });
 
-        function formatProgress(ms) {
-            const s = Math.floor(ms / 1000);
-            const min = String(Math.floor(s / 60)).padStart(2, '0');
-            const sec = String(s % 60).padStart(2, '0');
-            return `${min}:${sec}`;
-        }
         const dataPoints = [];
         for (let i = 0; i < binCount; i++) {
             const timeSec = Math.floor((i * duration) / binCount / 1000);
@@ -32,7 +27,7 @@ addCustomChart('densityRange', {
         }
 
         this.instance.setOption({
-            title: { text: '弹幕密度分布' },
+            title: { text: '弹幕密度分布（选取范围）' },
             tooltip: {
                 trigger: 'axis',
                 formatter: function (params) {
@@ -69,12 +64,7 @@ addCustomChart('densityRange', {
     clickBuffer: [],
     tempMarkLine: null,
     async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
-        function formatProgress(ms) {
-            const s = Math.floor(ms / 1000);
-            const min = String(Math.floor(s / 60)).padStart(2, '0');
-            const sec = String(s % 60).padStart(2, '0');
-            return `${min}:${sec}`;
-        }
+        const { formatProgress } = this.ctx;
         const sec = params.value[0];
         this.clickBuffer.push(sec);
 
