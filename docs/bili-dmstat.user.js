@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.7.4
+// @version      1.7.5
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -121,7 +121,7 @@
                                 }]
                             });
                         },
-                        async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
+                        async onClick({ params, applySubFilter }) {
                             const selectedUser = params.name;
                             await applySubFilter({
                                 value: selectedUser,
@@ -162,7 +162,7 @@
                                 }]
                             });
                         },
-                        async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
+                        async onClick({ params, applySubFilter }) {
                             const keyword = params.name;
                             await applySubFilter({
                                 value: keyword,
@@ -304,7 +304,7 @@
                                 series: [{ type: 'bar', data: y }]
                             });
                         },
-                        async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
+                        async onClick({ params, applySubFilter }) {
                             const selectedDate = params.name;
                             await applySubFilter({
                                 value: selectedDate,
@@ -336,7 +336,7 @@
                                 series: [{ type: 'bar', data: hours }]
                             });
                         },
-                        async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
+                        async onClick({ params, applySubFilter }) {
                             const selectedHour = parseInt(params.name);
                             await applySubFilter({
                                 value: selectedHour,
@@ -393,7 +393,7 @@
                                 }]
                             });
                         },
-                        async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
+                        async onClick({ params, applySubFilter }) {
                             const poolLabel = params.name;
                             const poolVal = this._poolIndexMap?.[poolLabel];
                             await applySubFilter({
@@ -879,17 +879,27 @@
                     danmakuList.filtered = [...danmakuList.original];
                     danmakuList.current = [...danmakuList.filtered];
                     danmakuCount.value.origin = danmakuList.original.length;
-                    await updateDispDanmakus(true);
 
+                    window.__DMSTAT_CUSTOM_CHARTS__ = window.__DMSTAT_CUSTOM_CHARTS__ || {};
                     window.addCustomChart = function (chartName, chartDef) {
                         if (!chartName || typeof chartDef !== 'object') {
                             console.warn('chartName 必须为字符串，chartDef 必须为对象');
                             return;
                         }
-                        if (charts[chartName]) {
+                        if (chartsVisible.value.includes(chartName)) {
                             console.warn(`图表 "${chartName}" 已存在`);
                             return;
                         }
+                        chartDef.ctx = {
+                            displayedDanmakus,
+                            danmakuCount,
+                            danmakuList,
+                            videoData,
+                            formatProgress,
+                            formatCtime,
+                            formatTime
+                        }
+                        window.__DMSTAT_CUSTOM_CHARTS__[chartName] = chartDef;
                         charts[chartName] = {
                             instance: null,
                             ...chartDef
@@ -901,8 +911,13 @@
                         nextTick(() => {
                             renderChart(chartName);
                         });
-                        console.log(`✅ 已添加图表 "${chartName}"，请在界面查看`);
+                        console.log(`✅ 已添加图表 "${chartName}"（仅保存在本页会话中）`);
                     };
+                    for (const [chartName, chartDef] of Object.entries(window.__DMSTAT_CUSTOM_CHARTS__)) {
+                        window.addCustomChart(chartName, chartDef);// 恢复本页面已有的自定义图表
+                    }
+                    await updateDispDanmakus(true);
+
                 });
                 return {
                     h,
