@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.7.5
+// @version      1.8.0
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -50,11 +50,187 @@
         doc.body.appendChild(appRoot);
 
         // 挂载Vue
-        const { createApp, ref, onMounted, nextTick, h } = win.Vue;
+        const { createApp, ref, reactive, onMounted, nextTick, h, computed, watch } = win.Vue;
         const ELEMENT_PLUS = win.ElementPlus;
         const ECHARTS = win.echarts;
         const app = createApp({
             setup() {
+                app.component('DanmukuTable', {
+                    props: {
+                        items: Array,
+                        itemHeight: {
+                            type: Number,
+                            default: 42
+                        },
+                        virtualThreshold: {
+                            type: Number,
+                            default: 2400
+                        },
+                        scrollToTime: Number
+                    },
+                    setup(props) {
+                        const scrollTop = ref(0);
+                        const scrollbarRef = ref(null);
+                        const isVirtual = computed(() => props.items.length > props.virtualThreshold);
+                        const start = computed(() => isVirtual.value ? Math.floor(scrollTop.value / props.itemHeight) : 0);
+                        const visibleCount = computed(() => isVirtual.value ? 50 : props.items.length);
+                        const visibleItems = computed(() =>
+                            props.items.slice(start.value, start.value + visibleCount.value)
+                        );
+                        const offsetTop = computed(() => isVirtual.value ? start.value * props.itemHeight : 0);
+                        const onScroll = ({ scrollTop: st }) => {
+                            scrollTop.value = st;
+                        };
+                        const highlightedRowIndex = ref(null);
+
+                        watch(() => props.scrollToTime, (val) => {
+                            if (typeof val !== 'number') return; if (!props.items.length) return;
+                            const idx = props.items.reduce((closestIdx, item, i) => {
+                                const currentDiff = Math.abs(item.progress - val);
+                                const closestDiff = Math.abs(props.items[closestIdx]?.progress - val);
+                                return currentDiff < closestDiff ? i : closestIdx;
+                            }, 0);
+                            nextTick(() => {
+                                if (isVirtual.value) {
+                                    const top = Math.max(0, idx - 3) * props.itemHeight;
+                                    scrollbarRef.value?.wrapRef?.scrollTo?.({
+                                        top,
+                                        behavior: 'smooth'
+                                    });
+                                } else {
+                                    const row = scrollbarRef.value?.$el?.querySelectorAll('.danmaku-row')[idx];
+                                    row?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+                                }
+                                highlightedRowIndex.value = idx;
+                                // 清除高亮
+                                setTimeout(() => {
+                                    highlightedRowIndex.value = null;
+                                }, 1500);
+                            });
+                        });
+
+                        return () =>
+                            h('div', {
+                                class: { 'danmuku-table': true, 'danmuku-table--virtual': isVirtual.value },
+                                style: { display: 'flex', flexDirection: 'column', border: '1px solid #ebeef5', minHeight: 0 }
+                            }, [
+                                // 表头
+                                h('div', {
+                                    style: {
+                                        display: 'flex', fontWeight: 'bold', color: '#909399',
+                                        backgroundColor: '#fdfdfd', borderBottom: '1px solid #ebeef5'
+                                    }
+                                }, [
+                                    h('div', {
+                                        style: { width: '80px', padding: '8px', borderRight: '1px solid #ebeef5' }
+                                    }, '时间'),
+                                    h('div', {
+                                        style: { flex: 1, padding: '8px', borderRight: '1px solid #ebeef5' }
+                                    }, '弹幕内容'),
+                                    h('div', {
+                                        style: { width: '160px', padding: '8px' }
+                                    }, '发送时间')
+                                ]),
+                                // 内容区域
+                                h(ELEMENT_PLUS.ElScrollbar, { ref: scrollbarRef, onScroll }, {
+                                    default: () => h('div', {
+                                        style: {
+                                            height: isVirtual.value ? (props.items.length * props.itemHeight + 'px') : 'auto',
+                                            position: 'relative'
+                                        }
+                                    }, [
+                                        h('div', {
+                                            style: { transform: `translateY(${offsetTop.value}px)` }
+                                        }, visibleItems.value.map((item, i) => {
+                                            const isHighlighted = start.value + i === highlightedRowIndex.value;
+                                            return h('div', {
+                                                class: 'danmaku-row',
+                                                style: {
+                                                    display: 'flex',
+                                                    borderBottom: '1px solid #ebeef5',
+                                                    transition: 'background-color 0.2s',
+                                                    backgroundColor: isHighlighted ? '#ecf5ff' : undefined
+                                                },
+                                                onMouseenter: (e) => e.currentTarget.style.backgroundColor = '#f5f7fa',
+                                                onMouseleave: (e) => e.currentTarget.style.backgroundColor = '',
+                                                onClick: () => handleRowClick(item)
+                                            }, [
+                                                h('div', {
+                                                    style: { width: '80px', padding: '8px', borderRight: '1px solid #ebeef5' }
+                                                }, formatProgress(item.progress)),
+                                                h(ELEMENT_PLUS.ElTooltip, {
+                                                    content: `发送用户: ${item.midHash}\n等级: ${item.weight}`,
+                                                    placement: 'top-start'
+                                                }, {
+                                                    default: () => h('div', {
+                                                        style: { flex: 1, padding: '8px', borderRight: '1px solid #ebeef5' }
+                                                    }, item.content)
+                                                }),
+                                                h('div', {
+                                                    style: { width: '160px', padding: '8px' }
+                                                }, formatCtime(item.ctime))
+                                            ])
+                                        }
+                                        ))
+                                    ])
+                                })
+                            ]);
+                    }
+                });
+                app.component('ImagePopoverLink', {
+                    props: {
+                        imgSrc: String, // 图片地址
+                        alt: String,    // 图片描述
+                        width: { type: Number, default: 100 },
+                        height: { type: Number, default: 100 },
+                        rounded: { type: Boolean, default: false },
+                        linkStyle: { type: String, default: '' }
+                    },
+                    setup(props, { slots }) {
+                        const imgStyle = computed(() => ({
+                            maxWidth: '100%', maxHeight: '100%',
+                            borderRadius: props.rounded ? '50%' : '0%'
+                        }));
+                        return () => {
+                            if (!props.imgSrc) return null;
+                            return h(ELEMENT_PLUS.ElPopover, {
+                                placement: 'right',
+                                popperStyle: `width: ${props.width}px; height: ${props.height}px; padding: 10px; box-sizing: content-box;`
+                            }, {
+                                default: () => h('div', {
+                                    style: {
+                                        display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: '100%'
+                                    }
+                                }, [
+                                    h('img', {
+                                        src: props.imgSrc, alt: props.alt, style: imgStyle.value
+                                    })
+                                ]),
+                                reference: () => h(ELEMENT_PLUS.ElLink, {
+                                    href: props.imgSrc, target: '_blank', type: 'primary', style: props.linkStyle
+                                }, slots.default ? slots.default() : '查看')
+                            });
+                        };
+                    }
+                });
+                app.component('ActionTag', {
+                    props: {
+                        type: { type: String, default: 'info' },
+                        title: String,
+                        onClick: Function
+                    },
+                    setup(props, { slots }) {
+                        return () =>
+                            h(win.ElementPlus.ElTag, {
+                                type: props.type, size: 'small', effect: 'light', round: true, title: props.title,
+                                style: {
+                                    marginLeft: '4px', verticalAlign: 'baseline', cursor: 'pointer', aspectRatio: '1/1', padding: '0'
+                                },
+                                onClick: props.onClick
+                            }, () => slots.default ? slots.default() : '');
+                    }
+                });
+
                 const converter = new BiliMidHashConverter();
                 const displayedDanmakus = ref([]);
                 const filterText = ref('^(哈|呵|h|ha|H|HA|233+)+$');
@@ -62,15 +238,29 @@
                 const currentSubFilt = ref({});
                 const subFiltHistory = ref([]);
                 const danmakuCount = ref({ origin: 0, filtered: 0 });
-                const videoData = ref(dataParam.videoData || {});
+                const videoData = reactive(dataParam.videoData || {});
                 const isTableVisible = ref(true);
                 const isTableAutoH = ref(false);
+                const scrollToTime = ref(null);
                 const loading = ref(true);
                 const panelInfo = ref(panelInfoParam);
+                const danmakuList = {
+                    original: [],   //原始
+                    filtered: [],   //正则筛选后
+                    current: []     //子筛选提交后
+                };
                 const charts = {
                     user: {
                         instance: null,
                         expandedH: false,
+                        actions: [
+                            {
+                                key: 'locateUser',
+                                icon: '⚲',
+                                title: '定位用户',
+                                method: 'locate'
+                            }
+                        ],
                         render(data) {
                             const countMap = {};
                             for (const d of data) {
@@ -130,11 +320,72 @@
                                     '用户',
                                     h(ELEMENT_PLUS.ElLink, {
                                         type: 'primary',
-                                        onClick: () => midHashOnClick(selectedUser),
+                                        onClick: () => queryMidFromHash(selectedUser),
                                         style: 'vertical-align: baseline;'
                                     }, selectedUser),
                                     '发送'
                                 ])
+                            });
+                        },
+                        locateInChart(midHash) {
+                            if (!this.instance) return;
+                            const option = this.instance.getOption();
+                            const index = option.yAxis[0].data.indexOf(midHash);
+
+                            if (index === -1) {
+                                ELEMENT_PLUS.ElMessageBox.alert(
+                                    `未在当前图表中找到用户 <b>${midHash}</b>`,
+                                    '未找到用户',
+                                    {
+                                        type: 'warning',
+                                        dangerouslyUseHTMLString: true,
+                                        confirmButtonText: '确定'
+                                    }
+                                );
+                                return;
+                            }
+                            const sc = this.expandedH ? 20 : 8;
+                            const scup = this.expandedH ? 9 : 3;
+                            if (index >= 0) {
+                                this.instance.setOption({
+                                    yAxis: {
+                                        axisLabel: {
+                                            formatter: function (value) {
+                                                if (value === midHash) {
+                                                    return '{a|' + value + '}';
+                                                } else {
+                                                    return value;
+                                                }
+                                            },
+                                            rich: {
+                                                a: {
+                                                    color: '#5470c6',
+                                                    fontWeight: 'bold'
+                                                }
+                                            }
+                                        }
+                                    },
+                                    dataZoom: [{
+                                        startValue: Math.min(option.yAxis[0].data.length - sc, Math.max(0, index - scup)),
+                                        endValue: Math.min(option.yAxis[0].data.length - 1, Math.max(0, index - scup) + sc - 1)
+                                    }]
+                                });
+                            }
+                            ELEMENT_PLUS.ElMessage.success(`已定位到用户 ${midHash}`);
+                        },
+                        locate() {
+                            ELEMENT_PLUS.ElMessageBox.prompt('请输入要定位的 midHash 用户 ID：', '定位用户', {
+                                confirmButtonText: '定位',
+                                cancelButtonText: '取消',
+                                inputPattern: /^[a-fA-F0-9]{5,}$/,
+                                inputErrorMessage: '请输入正确的 midHash（十六进制格式）'
+                            }).then(({ value }) => {
+                                this.locateInChart(value.trim());
+                            }).catch((err) => {
+                                if (err !== 'cancel') {
+                                    console.error(err);
+                                    ELEMENT_PLUS.ElMessage.error('定位失败');
+                                }
                             });
                         }
                     },
@@ -180,8 +431,9 @@
                     },
                     density: {
                         instance: null,
+                        refresh: true,
                         render(data) {
-                            const duration = videoData.value.duration * 1000; // ms
+                            const duration = videoData.duration * 1000; // ms
                             const minutes = duration / 1000 / 60;
 
                             // 动态设置 bin 数量
@@ -241,39 +493,12 @@
                         },
                         async onClick({ params }) {
                             const targetTime = params.value[0] * 1000;
-                            const list = displayedDanmakus.value;
-                            if (!list.length) return;
-                            // 找到最接近的弹幕 index
-                            let closestIndex = 0;
-                            let minDiff = Math.abs(list[0].progress - targetTime);
-                            for (let i = 1; i < list.length; i++) {
-                                const diff = Math.abs(list[i].progress - targetTime);
-                                if (diff < minDiff) {
-                                    closestIndex = i;
-                                    minDiff = diff;
-                                }
-                            }
-                            // 使用 Element Plus 表格 ref 滚动到该行
-                            nextTick(() => {
-                                const rows = doc.querySelectorAll('.el-table__body-wrapper tbody tr');
-                                const row = rows?.[closestIndex];
-                                if (row) {
-                                    row.scrollIntoView({
-                                        behavior: 'smooth',
-                                        block: 'center'
-                                    });
-                                    const original = row.style.backgroundColor;
-                                    row.style.transition = 'background-color 0.3s ease';
-                                    row.style.backgroundColor = '#ecf5ff';
-                                    setTimeout(() => {
-                                        row.style.backgroundColor = original || '';
-                                    }, 1500);
-                                }
-                            });
+                            scrollToTime.value = targetTime;
                         }
                     },
                     date: {
                         instance: null,
+                        refresh: true,
                         render(data) {
                             const countMap = {};
                             data.forEach(d => {
@@ -322,6 +547,7 @@
                     },
                     hour: {
                         instance: null,
+                        refresh: true,
                         render(data) {
                             const hours = new Array(24).fill(0);
                             data.forEach(d => {
@@ -411,13 +637,64 @@
                     }
                 };
                 const chartsVisible = ref(Object.keys(charts));
-                const chartsExpandable = ref(Object.keys(charts).filter(key => 'expandedH' in charts[key]));
+                const chartsActions = reactive({
+                    remove: {
+                        icon: '⨉',
+                        title: '移除图表',
+                        apply: () => true,
+                        handler: (chart) => {
+                            const idx = chartsVisible.value.indexOf(chart);
+                            if (idx !== -1) {
+                                chartsVisible.value.splice(idx, 1);
+                                disposeChart(chart);
+                            }
+                        }
+                    },
+                    moveDown: {
+                        icon: '▼',
+                        title: '下移图表',
+                        apply: () => true,
+                        handler: (chart) => {
+                            const idx = chartsVisible.value.indexOf(chart);
+                            if (idx < chartsVisible.value.length - 1) {
+                                chartsVisible.value.splice(idx, 1);
+                                chartsVisible.value.splice(idx + 1, 0, chart);
+                            }
+                        }
+                    },
+                    moveUp: {
+                        icon: '▲',
+                        title: '上移图表',
+                        apply: () => true,
+                        handler: (chart) => {
+                            const idx = chartsVisible.value.indexOf(chart);
+                            if (idx > 0) {
+                                chartsVisible.value.splice(idx, 1);
+                                chartsVisible.value.splice(idx - 1, 0, chart);
+                            }
+                        }
+                    },
+                    refresh: {
+                        icon: '↻',
+                        title: '刷新',
+                        apply: chart => 'refresh' in charts[chart],
+                        handler: (chart) => {
+                            disposeChart(chart);
+                            renderChart(chart);
+                        }
+                    },
+                    expandH: {
+                        icon: '⇕',
+                        title: '展开/收起',
+                        apply: chart => 'expandedH' in charts[chart],
+                        handler: (chart) => {
+                            charts[chart].expandedH = !charts[chart].expandedH;
+                            disposeChart(chart);
+                            renderChart(chart);
+                        }
+                    }
+                });
                 const chartHover = ref(null);
-                const danmakuList = {
-                    original: [],   //原始
-                    filtered: [],   //正则筛选后
-                    current: []     //子筛选提交后
-                };
 
                 function formatProgress(ms) {
                     const s = Math.floor(ms / 1000);
@@ -534,7 +811,7 @@
                                 cancelButtonText: '关闭',
                             }).then(() => {
                                 const link = doc.createElement('a');
-                                link.download = `${videoData.value.bvid}_danmaku_statistics.png`;
+                                link.download = `${videoData.bvid}_danmaku_statistics.png`;
                                 link.href = blobUrl;
                                 link.click();
                                 URL.revokeObjectURL(blobUrl); // 可选：释放内存
@@ -552,7 +829,7 @@
                     }
                 }
 
-                function midHashOnClick(midHash) {
+                function queryMidFromHash(midHash) {
                     ELEMENT_PLUS.ElMessageBox.confirm(
                         `是否尝试反查用户ID？
                         <p style="margin-top: 10px; font-size: 12px; color: gray;">
@@ -588,7 +865,8 @@
                             ELEMENT_PLUS.ElMessage.error('未能查到用户ID或用户不存在');
                         }
                     }).catch((err) => {
-                        console.error(err);
+                        if ((err !== 'cancel'))
+                            console.error(err);
                         // 用户点击了取消，只复制midHash
                         navigator.clipboard.writeText(midHash).then(() => {
                             ELEMENT_PLUS.ElMessage.success('midHash已复制到剪贴板');
@@ -596,6 +874,21 @@
                             ELEMENT_PLUS.ElMessage.error('复制失败');
                         });
                     });
+                }
+                function handleRowClick(row) {
+                    let el = doc.getElementById('wrapper-chart');
+                    if (!el) return;
+                    while (el && el !== doc.body) {
+                        //寻找可以滚动的父级元素
+                        const overflowY = getComputedStyle(el).overflowY;
+                        const canScroll = overflowY === 'scroll' || overflowY === 'auto';
+                        if (canScroll && el.scrollHeight > el.clientHeight) {
+                            el.scrollTo({ top: 0, behavior: 'smooth' });
+                            break;
+                        }
+                        el = el.parentElement;
+                    }
+                    charts.user.locateInChart(row.midHash);
                 }
 
                 function renderChart(chart) {
@@ -629,105 +922,6 @@
                         charts[chart].instance.dispose();
                         charts[chart].instance = null;
                     }
-                }
-                function expandChart(chart) {
-                    charts[chart].expandedH = !charts[chart].expandedH;
-                    disposeChart(chart);
-                    renderChart(chart);
-                }
-                function moveChartUp(chart) {
-                    const idx = chartsVisible.value.indexOf(chart);
-                    if (idx > 0) {
-                        chartsVisible.value.splice(idx, 1);
-                        chartsVisible.value.splice(idx - 1, 0, chart);
-                    }
-                }
-                function moveChartDown(chart) {
-                    const idx = chartsVisible.value.indexOf(chart);
-                    if (idx < chartsVisible.value.length - 1) {
-                        chartsVisible.value.splice(idx, 1);
-                        chartsVisible.value.splice(idx + 1, 0, chart);
-                    }
-                }
-                function moveChartOut(chart) {
-                    const idx = chartsVisible.value.indexOf(chart);
-                    if (idx !== -1) {
-                        chartsVisible.value.splice(idx, 1);
-                        disposeChart(chart);
-                    }
-                }
-
-                function locateUserInChart(midHash) {
-                    if (!charts.user.instance) return;
-                    const option = charts.user.instance.getOption();
-                    const index = option.yAxis[0].data.indexOf(midHash);
-
-                    if (index === -1) {
-                        ELEMENT_PLUS.ElMessageBox.alert(
-                            `未在当前图表中找到用户 <b>${midHash}</b>`,
-                            '未找到用户',
-                            {
-                                type: 'warning',
-                                dangerouslyUseHTMLString: true,
-                                confirmButtonText: '确定'
-                            }
-                        );
-                        return;
-                    }
-                    const sc = charts.user.expandedH ? 20 : 8;
-                    const scup = charts.user.expandedH ? 9 : 3;
-                    if (index >= 0) {
-                        charts.user.instance.setOption({
-                            yAxis: {
-                                axisLabel: {
-                                    formatter: function (value) {
-                                        if (value === midHash) {
-                                            return '{a|' + value + '}';
-                                        } else {
-                                            return value;
-                                        }
-                                    },
-                                    rich: {
-                                        a: {
-                                            color: '#5470c6',
-                                            fontWeight: 'bold'
-                                        }
-                                    }
-                                }
-                            },
-                            dataZoom: [{
-                                startValue: Math.min(option.yAxis[0].data.length - sc, Math.max(0, index - scup)),
-                                endValue: Math.min(option.yAxis[0].data.length - 1, Math.max(0, index - scup) + sc - 1)
-                            }]
-                        });
-                    }
-                    ELEMENT_PLUS.ElMessage.success(`已定位到用户 ${midHash}`);
-                }
-                function handleRowClick(row) {
-                    let el = doc.getElementById('wrapper-chart');
-                    if (!el) return;
-                    while (el && el !== doc.body) {
-                        //寻找可以滚动的父级元素
-                        const overflowY = getComputedStyle(el).overflowY;
-                        const canScroll = overflowY === 'scroll' || overflowY === 'auto';
-                        if (canScroll && el.scrollHeight > el.clientHeight) {
-                            el.scrollTo({ top: 0, behavior: 'smooth' });
-                            break;
-                        }
-                        el = el.parentElement;
-                    }
-
-                    locateUserInChart(row.midHash);
-                }
-                function promptLocateUser() {
-                    ELEMENT_PLUS.ElMessageBox.prompt('请输入要定位的 midHash 用户 ID：', '定位用户', {
-                        confirmButtonText: '定位',
-                        cancelButtonText: '取消',
-                        inputPattern: /^[a-fA-F0-9]{5,}$/,
-                        inputErrorMessage: '请输入正确的 midHash（十六进制格式）'
-                    }).then(({ value }) => {
-                        locateUserInChart(value.trim());
-                    }).catch(() => { /* 用户取消 */ });
                 }
 
                 async function updateDispDanmakus(ifchart = false, data = danmakuList.current, subFilt = {}) {
@@ -808,7 +1002,6 @@
                     await updateDispDanmakus(true);
                 }
 
-
                 onMounted(async () => {
                     if ((!dataParam?.videoData && !dataParam?.episodeData) || !Array.isArray(dataParam?.danmakuData)) {
                         ELEMENT_PLUS.ElMessageBox.alert(
@@ -837,7 +1030,7 @@
                             }
                         }
                         if (ep) {
-                            Object.assign(videoData.value, {
+                            Object.assign(videoData, {
                                 bvid: ep.bvid,
                                 cid: ep.cid,
                                 epid: ep.ep_id || ep.id,
@@ -861,25 +1054,47 @@
                             });
                         }
                     }
-                    if (videoData.value?.pic?.startsWith('http:')) {
-                        videoData.value.pic = videoData.value.pic.replace(/^http:/, 'https:');
+                    if (videoData?.pic?.startsWith('http:')) {
+                        videoData.pic = videoData.pic.replace(/^http:/, 'https:');
                     }
-                    if (videoData.value?.owner?.face?.startsWith('http:')) {
-                        videoData.value.owner.face = videoData.value.owner.face.replace(/^http:/, 'https:');
+                    if (videoData?.owner?.face?.startsWith('http:')) {
+                        videoData.owner.face = videoData.owner.face.replace(/^http:/, 'https:');
                     }
-                    if (videoData.value.pages) {
-                        if (!isNaN(dataParam.p) && videoData.value.pages[dataParam.p - 1]) {
-                            videoData.value.page_cur = videoData.value.pages[dataParam.p - 1];
-                            videoData.value.duration = videoData.value.page_cur.duration;
-                        } else if (videoData.value.pages[0]) {
-                            videoData.value.duration = videoData.value.pages[0].duration;
+                    if (videoData.pages) {
+                        if (!isNaN(dataParam.p) && videoData.pages[dataParam.p - 1]) {
+                            videoData.page_cur = videoData.pages[dataParam.p - 1];
+                            videoData.duration = videoData.page_cur.duration;
+                        } else if (videoData.pages[0]) {
+                            videoData.duration = videoData.pages[0].duration;
                         }
                     }
                     danmakuList.original = [...dataParam.danmakuData].sort((a, b) => a.progress - b.progress);
                     danmakuList.filtered = [...danmakuList.original];
                     danmakuList.current = [...danmakuList.filtered];
                     danmakuCount.value.origin = danmakuList.original.length;
+                    await updateDispDanmakus(true);
 
+                    function registerChartAction(chartName, chartDef) {
+                        if (!Array.isArray(chartDef.actions)) return;
+                        chartDef.actions.forEach(({ key, icon, title, method }) => {
+                            if (!key || !method) return;
+                            chartsActions[`${chartName}:${key}`] = {
+                                icon,
+                                title,
+                                apply: chart => chart === chartName,
+                                handler: chart => {
+                                    if (typeof charts[chart]?.[method] === 'function') {
+                                        charts[chart][method]();
+                                    } else {
+                                        console.warn(`[chartsActions] ${chart}.${method} is not a function`);
+                                    }
+                                }
+                            };
+                        });
+                    }
+                    for (const [chartName, chartDef] of Object.entries(charts)) {
+                        registerChartAction(chartName, chartDef);
+                    }
                     window.__DMSTAT_CUSTOM_CHARTS__ = window.__DMSTAT_CUSTOM_CHARTS__ || {};
                     window.addCustomChart = function (chartName, chartDef) {
                         if (!chartName || typeof chartDef !== 'object') {
@@ -891,23 +1106,23 @@
                             return;
                         }
                         chartDef.ctx = {
+                            chartsActions,
                             displayedDanmakus,
                             danmakuCount,
                             danmakuList,
                             videoData,
+                            registerChartAction,
                             formatProgress,
                             formatCtime,
                             formatTime
                         }
+                        registerChartAction(chartName, chartDef);
                         window.__DMSTAT_CUSTOM_CHARTS__[chartName] = chartDef;
                         charts[chartName] = {
                             instance: null,
                             ...chartDef
                         };
                         chartsVisible.value.push(chartName);
-                        if ('expandedH' in charts[chartName]) {
-                            chartsExpandable.value.push(chartName);
-                        }
                         nextTick(() => {
                             renderChart(chartName);
                         });
@@ -916,8 +1131,6 @@
                     for (const [chartName, chartDef] of Object.entries(window.__DMSTAT_CUSTOM_CHARTS__)) {
                         window.addCustomChart(chartName, chartDef);// 恢复本页面已有的自定义图表
                     }
-                    await updateDispDanmakus(true);
-
                 });
                 return {
                     h,
@@ -933,17 +1146,11 @@
                     loading,
                     isTableVisible,
                     isTableAutoH,
+                    scrollToTime,
                     panelInfo,
+                    chartsActions,
                     chartsVisible,
-                    chartsExpandable,
                     chartHover,
-                    expandChart,
-                    moveChartUp,
-                    moveChartDown,
-                    moveChartOut,
-                    midHashOnClick,
-                    handleRowClick,
-                    promptLocateUser,
                     clearSubFilter,
                     commitSubFilter,
                     applyActiveSubFilters,
@@ -960,26 +1167,17 @@
         <div style="min-width: 400px;">
             <div id="wrapper-title" style="text-align: left;">
                 <h3>{{ videoData.title || '加载中...' }}
-                    <el-popover placement="right" v-if="videoData.pic"
-                        popper-style="width: 360px; height: 180px; padding: 10px; box-sizing: content-box;">
-                        <div
-                            style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%;">
-                            <img :src="videoData.pic" alt="视频封面" style="max-width: 100%; max-height: 100%;" />
-                        </div>
-                        <template v-slot:reference>
-                            <el-link :href="videoData.pic" target="_blank" type="primary">
-                                <svg t="1746010439489" class="icon" viewBox="0 0 1029 1024" version="1.1"
-                                    xmlns="http://www.w3.org/2000/svg" p-id="5042" width="20" height="20">
-                                    <path
-                                        d="M487.966546 867.289336c-0.191055 0-0.38211 0-0.577318-0.008306-85.119089-0.926201-171.396967-8.3898-256.428835-22.178976a29.812863 29.812863 0 0 0-0.598085-0.095528c-75.890309-13.224318-150.032051-79.636645-165.274905-148.050895l-0.161981-0.751759c-33.405525-161.104925-33.405525-324.473435 0-485.570054 0.053994-0.249202 0.103834-0.498404 0.161981-0.743452C80.326104 141.467809 154.471999 75.051329 230.370615 61.835317l0.593931-0.09968a1713.961362 1713.961362 0 0 1 550.250427 0.09968c75.890309 13.207705 150.036204 79.624185 165.279059 148.055049 0.058147 0.249202 0.107988 0.494251 0.157827 0.743452 21.672265 104.444702 29.385067 210.417843 22.943196 314.962227-1.761027 28.620847-26.390489 50.355413-55.011337 48.627612-28.625001-1.765181-50.38864-26.390489-48.627612-55.011336 5.864553-95.195155-1.158789-191.769229-20.878973-287.043298-6.836441-29.630115-51.015798-62.56631-81.414286-67.99476a1610.243499 1610.243499 0 0 0-515.735953 0c-30.394335 5.432603-74.577845 38.368798-81.422593 67.990606-30.377721 146.817345-30.381874 295.690607 0 442.512105 6.853054 29.621808 51.028258 62.55385 81.422593 67.986453 79.81524 12.925276 160.756042 19.923698 240.587896 20.791752 28.670688 0.315656 51.65957 23.802942 51.352221 52.481936-0.311502 28.479633-23.49144 51.352221-51.900465 51.352221z"
-                                        p-id="5043" fill="#409eff"></path>
-                                    <path
-                                        d="M727.790223 570.539621c20.272581 20.272581 53.150628 20.276734 73.427362 0s20.276734-53.146475 0-73.423209l-102.762589-102.766742a51.917079 51.917079 0 0 0-73.427362 0l-86.036983 86.036982-66.055138-66.055137c-20.272581-20.272581-53.146475-20.272581-73.423209 0l-162.716431 162.712278c-20.272581 20.280888-20.272581 53.150628 0 73.423209a51.759251 51.759251 0 0 0 36.711604 15.209628c13.286619 0 26.573238-5.075414 36.711605-15.209628l126.004827-126.004826 66.055137 66.055137c20.276734 20.280888 53.146475 20.280888 73.419056 0l86.04529-86.036983 66.046831 66.059291zM974.911364 766.408222c-20.272581-20.272581-53.142322-20.272581-73.427363 0l-40.877431 40.881585v-133.318905c0-28.670688-23.246391-51.917079-51.917079-51.917079s-51.917079 23.246391-51.917078 51.917079v133.318905l-40.877432-40.881585c-20.285041-20.272581-53.154782-20.272581-73.427362 0-20.272581 20.280888-20.272581 53.150628 0 73.427363l129.510268 129.501961c10.138367 10.134214 23.424986 15.205474 36.711604 15.205474s26.569084-5.07126 36.711605-15.205474l129.510268-129.501961c20.268428-20.276734 20.268428-53.146475 0-73.427363z"
-                                        p-id="5044" fill="#409eff"></path>
-                                </svg>
-                            </el-link>
-                        </template>
-                    </el-popover>
+                    <image-popover-link :imgSrc="videoData.pic" alt="视频封面" :width="360" :height="180">
+                        <svg t="1746010439489" class="icon" viewBox="0 0 1029 1024" version="1.1"
+                            xmlns="http://www.w3.org/2000/svg" p-id="5042" width="20" height="20">
+                            <path
+                                d="M487.966546 867.289336c-0.191055 0-0.38211 0-0.577318-0.008306-85.119089-0.926201-171.396967-8.3898-256.428835-22.178976a29.812863 29.812863 0 0 0-0.598085-0.095528c-75.890309-13.224318-150.032051-79.636645-165.274905-148.050895l-0.161981-0.751759c-33.405525-161.104925-33.405525-324.473435 0-485.570054 0.053994-0.249202 0.103834-0.498404 0.161981-0.743452C80.326104 141.467809 154.471999 75.051329 230.370615 61.835317l0.593931-0.09968a1713.961362 1713.961362 0 0 1 550.250427 0.09968c75.890309 13.207705 150.036204 79.624185 165.279059 148.055049 0.058147 0.249202 0.107988 0.494251 0.157827 0.743452 21.672265 104.444702 29.385067 210.417843 22.943196 314.962227-1.761027 28.620847-26.390489 50.355413-55.011337 48.627612-28.625001-1.765181-50.38864-26.390489-48.627612-55.011336 5.864553-95.195155-1.158789-191.769229-20.878973-287.043298-6.836441-29.630115-51.015798-62.56631-81.414286-67.99476a1610.243499 1610.243499 0 0 0-515.735953 0c-30.394335 5.432603-74.577845 38.368798-81.422593 67.990606-30.377721 146.817345-30.381874 295.690607 0 442.512105 6.853054 29.621808 51.028258 62.55385 81.422593 67.986453 79.81524 12.925276 160.756042 19.923698 240.587896 20.791752 28.670688 0.315656 51.65957 23.802942 51.352221 52.481936-0.311502 28.479633-23.49144 51.352221-51.900465 51.352221z"
+                                p-id="5043" fill="#409eff"></path>
+                            <path
+                                d="M727.790223 570.539621c20.272581 20.272581 53.150628 20.276734 73.427362 0s20.276734-53.146475 0-73.423209l-102.762589-102.766742a51.917079 51.917079 0 0 0-73.427362 0l-86.036983 86.036982-66.055138-66.055137c-20.272581-20.272581-53.146475-20.272581-73.423209 0l-162.716431 162.712278c-20.272581 20.280888-20.272581 53.150628 0 73.423209a51.759251 51.759251 0 0 0 36.711604 15.209628c13.286619 0 26.573238-5.075414 36.711605-15.209628l126.004827-126.004826 66.055137 66.055137c20.276734 20.280888 53.146475 20.280888 73.419056 0l86.04529-86.036983 66.046831 66.059291zM974.911364 766.408222c-20.272581-20.272581-53.142322-20.272581-73.427363 0l-40.877431 40.881585v-133.318905c0-28.670688-23.246391-51.917079-51.917079-51.917079s-51.917079 23.246391-51.917078 51.917079v133.318905l-40.877432-40.881585c-20.285041-20.272581-53.154782-20.272581-73.427362 0-20.272581 20.280888-20.272581 53.150628 0 73.427363l129.510268 129.501961c10.138367 10.134214 23.424986 15.205474 36.711604 15.205474s26.569084-5.07126 36.711605-15.205474l129.510268-129.501961c20.268428-20.276734 20.268428-53.146475 0-73.427363z"
+                                p-id="5044" fill="#409eff"></path>
+                        </svg>
+                    </image-popover-link>
                 </h3>
                 <el-tag type="success" v-if="videoData.page_cur">
                     第 {{ videoData.page_cur.page }} P：{{ videoData.page_cur.part }}
@@ -1009,28 +1207,18 @@
                         target="_blank" type="primary" style="vertical-align: baseline;">
                         {{ videoData.owner.name }}
                     </el-link>
-                    <el-popover placement="right" v-if="videoData.owner"
-                        popper-style="width: 100px; height: 100px; padding: 10px; box-sizing: content-box;">
-                        <div
-                            style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%;">
-                            <img :src="videoData.owner.face" alt="UP主头像"
-                                style="max-width: 100%; max-height: 100%; border-radius: 50%;" />
-                        </div>
-                        <template v-slot:reference>
-                            <el-link :href="videoData.owner.face" target="_blank" type="primary"
-                                style="margin-left: 8px; vertical-align: -2px;">
-                                <svg t="1746010657723" class="icon" viewBox="0 0 1024 1024" version="1.1"
-                                    xmlns="http://www.w3.org/2000/svg" p-id="10144" width="16" height="16">
-                                    <path
-                                        d="M1024 512c0-281.6-230.4-512-512-512S0 230.4 0 512s230.4 512 512 512 512-230.4 512-512z m-512 448c-249.6 0-448-198.4-448-448s198.4-448 448-448 448 198.4 448 448-198.4 448-448 448z"
-                                        fill="#409eff" p-id="10145"></path>
-                                    <path
-                                        d="M627.2 505.6c44.8-38.4 76.8-89.6 76.8-153.6 0-108.8-83.2-192-192-192s-192 83.2-192 192c0 64 32 115.2 76.8 153.6-102.4 44.8-172.8 147.2-172.8 262.4 0 19.2 12.8 32 32 32s32-12.8 32-32c0-121.6 102.4-224 224-224s224 102.4 224 224c0 19.2 12.8 32 32 32s32-12.8 32-32c0-115.2-70.4-217.6-172.8-262.4zM512 480c-70.4 0-128-57.6-128-128s57.6-128 128-128 128 57.6 128 128-57.6 128-128 128z"
-                                        fill="#409eff" p-id="10146"></path>
-                                </svg>
-                            </el-link>
-                        </template>
-                    </el-popover><br />
+                    <image-popover-link :imgSrc="videoData.owner?.face" alt="UP主头像" :rounded="true" :width="100"
+                        :height="100" linkStyle="margin-left: 8px; vertical-align: -2px;">
+                        <svg t="1746010657723" class="icon" viewBox="0 0 1024 1024" version="1.1"
+                            xmlns="http://www.w3.org/2000/svg" p-id="10144" width="16" height="16">
+                            <path
+                                d="M1024 512c0-281.6-230.4-512-512-512S0 230.4 0 512s230.4 512 512 512 512-230.4 512-512z m-512 448c-249.6 0-448-198.4-448-448s198.4-448 448-448 448 198.4 448 448-198.4 448-448 448z"
+                                fill="#409eff" p-id="10145"></path>
+                            <path
+                                d="M627.2 505.6c44.8-38.4 76.8-89.6 76.8-153.6 0-108.8-83.2-192-192-192s-192 83.2-192 192c0 64 32 115.2 76.8 153.6-102.4 44.8-172.8 147.2-172.8 262.4 0 19.2 12.8 32 32 32s32-12.8 32-32c0-121.6 102.4-224 224-224s224 102.4 224 224c0 19.2 12.8 32 32 32s32-12.8 32-32c0-115.2-70.4-217.6-172.8-262.4zM512 480c-70.4 0-128-57.6-128-128s57.6-128 128-128 128 57.6 128 128-57.6 128-128 128z"
+                                fill="#409eff" p-id="10146"></path>
+                        </svg>
+                    </image-popover-link><br />
                     发布时间：
                     <el-tag type="info" size="small" style="vertical-align: baseline;">
                         {{ videoData.pubdate ? formatTime(videoData.pubdate) : '-' }}
@@ -1070,50 +1258,36 @@
                             <el-checkbox v-model="item.enabled" style="margin-right: 4px;"
                                 @change="applyActiveSubFilters" />
                             <component :is="item.labelVNode(h)" />
-                            <el-tag type="info" size="small" effect="light" round
-                                style="margin-left: 4px; vertical-align: baseline; cursor: pointer; aspect-ratio: 1/1; padding: 0;"
-                                @click="() => { subFiltHistory.splice(idx, 1); applyActiveSubFilters(); }"
-                                title="清除历史子筛选">
-                                ×
-                            </el-tag><br />
+                            <action-tag @click="() => { subFiltHistory.splice(idx, 1); applyActiveSubFilters(); }"
+                                title="清除历史子筛选">×</action-tag><br />
                         </span>
                     </template>
                     结果：共有 {{ danmakuCount.filtered }} 条弹幕<br />
                     <template v-if="currentSubFilt.labelVNode">
                         <component :is="currentSubFilt.labelVNode(h)" />
                         弹幕共 {{ displayedDanmakus.length }} 条
-                        <el-tag type="info" size="small" effect="light" round
-                            style="margin-left: 4px; vertical-align: baseline; cursor: pointer; aspect-ratio: 1/1; padding: 0;"
-                            @click="clearSubFilter" title="清除子筛选">
-                            ×
-                        </el-tag>
-                        <el-tag type="success" size="small" effect="light" round
-                            style="margin-left: 4px; vertical-align: baseline; cursor: pointer; aspect-ratio: 1/1; padding: 0;"
-                            @click="commitSubFilter" title="提交子筛选结果作为新的数据源">
-                            ✔
-                        </el-tag>
-
-
+                        <action-tag @click="clearSubFilter" title="清除子筛选">×</action-tag>
+                        <action-tag type="success" :onClick="commitSubFilter" title="提交子筛选结果作为新的数据源">✔</action-tag>
                     </template>
                 </p>
             </div>
 
             <div id="wrapper-table" :style="isTableAutoH ? '' : 'height: 100%; display: flex; flex-direction: column;'">
                 <div @click="isTableVisible = !isTableVisible" style="
-                  cursor: pointer;
-                  display: flex;
-                  align-items: center;
-                  padding: 6px 10px;
-                  border-top-left-radius: 6px;
-                  border-top-right-radius: 6px;
-                  background-color: #fafafa;
-                  transition: background-color 0.2s ease;
-                  user-select: none;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    padding: 6px 10px;
+                    border-top-left-radius: 6px;
+                    border-top-right-radius: 6px;
+                    background-color: #fafafa;
+                    transition: background-color 0.2s ease;
+                    user-select: none;
                 ">
-                    <span style="flex: 1; font-size: 14px; color: #333;">
+                    <span style="flex: 1; font-size: 14px; color: #333; height: 32px; align-content: center;">
                         弹幕列表
                     </span>
-                    <el-popover placement="bottom" width="160" trigger="click">
+                    <el-popover placement="bottom" width="160" trigger="click" v-if="displayedDanmakus.length < 100">
                         <template v-slot:reference>
                             <el-button text style="margin-right: 20px;" circle @click.stop />
                         </template>
@@ -1126,22 +1300,8 @@
                     </span>
                 </div>
                 <el-collapse-transition>
-                    <el-table :data="displayedDanmakus" v-show="isTableVisible" @row-click="handleRowClick" border>
-                        <el-table-column prop="progress" label="时间" width="80">
-                            <template #default="{ row }">{{ formatProgress(row.progress) }}</template>
-                        </el-table-column>
-                        <el-table-column prop="content" label="弹幕内容">
-                            <template #default="{ row }">
-                                <el-tooltip class="item" placement="top-start"
-                                    :content="'发送用户: ' + row.midHash + '\\n屏蔽等级: ' + row.weight">
-                                    <span>{{ row.content }}</span>
-                                </el-tooltip>
-                            </template>
-                        </el-table-column>
-                        <el-table-column prop="ctime" label="发送时间" width="160">
-                            <template #default="{ row }">{{ formatCtime(row.ctime) }}</template>
-                        </el-table-column>
-                    </el-table>
+                    <danmuku-table v-show="isTableVisible" :items="displayedDanmakus" :virtual-threshold="800"
+                        :scroll-to-time="scrollToTime" />
                 </el-collapse-transition>
             </div>
         </div>
@@ -1149,24 +1309,19 @@
 
     <el-container>
         <el-header style="
-        height: auto; 
-        padding: 10px;
-        box-shadow: 2px 2px 2px rgba(0, 0, 0, 0.05);
-        border-bottom: 1px solid #ddd;">
+            height: auto; 
+            padding: 10px;
+            box-shadow: 2px 2px 2px rgba(0, 0, 0, 0.05);
+            border-bottom: 1px solid #ddd;">
             <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 5px;">
                 <el-input v-model="filterText" placeholder="请输入正则表达式"
                     style="flex: 1 1 200px; min-width: 150px;"></el-input>
                 <span></span>
-                <template v-if="displayedDanmakus.length == danmakuCount.origin">
-                    <el-button @click="applyFilter" type="warning">筛选</el-button>
-                    <span></span>
-                    <el-button @click="resetFilter">取消筛选</el-button>
-                </template>
-                <template v-else>
-                    <el-button @click="applyFilter">筛选</el-button>
-                    <span></span>
-                    <el-button @click="resetFilter" type="warning">取消筛选</el-button>
-                </template>
+                <el-button @click="applyFilter"
+                    :type="displayedDanmakus.length === danmakuCount.origin ? 'warning' : 'default'">筛选</el-button>
+                <span></span>
+                <el-button @click="resetFilter"
+                    :type="displayedDanmakus.length === danmakuCount.origin ? 'default' : 'warning'">取消筛选</el-button>
                 <span></span>
                 <el-button @click="shareImage" title="分享统计结果" circle>
                     <svg t="1746120386170" class="icon" viewBox="0 0 1024 1024" version="1.1"
@@ -1183,8 +1338,8 @@
                     </svg>
                 </el-button>
                 <span></span>
-                <el-button @click="panelInfo.newPanel(panelInfo.type)" title="新标签页打开统计面板" circle
-                    v-if="panelInfo.type == 0">
+                <el-button v-if="panelInfo.type == 0" @click="panelInfo.newPanel(panelInfo.type)" circle
+                    title="新标签页打开统计面板">
                     <svg t="1746238142181" class="icon" viewBox="0 0 1024 1024" version="1.1"
                         xmlns="http://www.w3.org/2000/svg" p-id="3091" width="16" height="16">
                         <path
@@ -1192,7 +1347,7 @@
                             fill="#409eff" p-id="3092"></path>
                     </svg>
                 </el-button>
-                <el-button @click="panelInfo.newPanel(panelInfo.type)" title="下载统计面板" circle v-else>
+                <el-button v-else @click="panelInfo.newPanel(panelInfo.type)" circle title="下载统计面板">
                     <svg t="1746264728781" class="icon" viewBox="0 0 1024 1024" version="1.1"
                         xmlns="http://www.w3.org/2000/svg" p-id="2669" width="16" height="16">
                         <path
@@ -1206,62 +1361,33 @@
         <el-main style="overflow-y: auto;">
             <div id="wrapper-chart" style="min-width: 400px;">
                 <div v-for="(chart, index) in chartsVisible" :key="chart" :style="{
-                  position: 'relative',
-                  marginBottom: index < chartsVisible.length - 1 ? '20px' : '0'
+                    position: 'relative',
+                    marginBottom: index < chartsVisible.length - 1 ? '20px' : '0'
                 }" @mouseenter="chartHover = chart" @mouseleave="chartHover = null">
                     <!-- 控制按钮 -->
                     <div v-if="chartHover === chart" :style="{
-                      position: 'absolute',
-                      top: '4px',
-                      right: '4px',
-                      display: 'flex',
-                      gap: '3px',
-                      opacity: 1,
-                      zIndex: 10,
-                      transition: 'opacity 0.2s'
+                        position: 'absolute',
+                        top: '4px',
+                        right: '4px',
+                        display: 'flex',
+                        direction: 'rtl',
+                        gap: '3px',
+                        opacity: 1,
+                        zIndex: 10,
+                        transition: 'opacity 0.2s'
                     }">
-                        <el-button v-if="chart === 'user'" size="small" circle @click="promptLocateUser" :style="{
-                      backgroundColor: 'rgba(128,128,128,0.4)',
-                      color: 'white',
-                      fontWeight: 'bold'
-                    }">
-                            ⚲
-                        </el-button>
-                        <span></span>
-                        <template v-if="chartsExpandable.includes(chart)">
-                            <el-button size="small" circle @click="expandChart(chart)" :style="{
-                      backgroundColor: 'rgba(128,128,128,0.4)',
-                      color: 'white',
-                      fontWeight: 'bold'
-                    }">
-                                ⇕
-                            </el-button>
-                            <span></span>
+                        <template v-for="(action, key) in chartsActions">
+                            <template v-if="action.apply(chart)" :key="key">
+                                <el-button :title="action.title" @click="action.handler(chart)" :style="{
+                                    backgroundColor: 'rgba(128,128,128,0.4)',
+                                    color: 'white',
+                                    fontWeight: 'bold'
+                                }" size="small" circle>
+                                    {{ action.icon }}
+                                </el-button>
+                                <span></span>
+                            </template>
                         </template>
-                        <el-button size="small" circle @click="moveChartUp(chart)" :style="{
-                      backgroundColor: 'rgba(128,128,128,0.4)',
-                      color: 'white',
-                      fontWeight: 'bold'
-                    }">
-                            ▲
-                        </el-button>
-                        <span></span>
-                        <el-button size="small" circle @click="moveChartDown(chart)" :style="{
-                      backgroundColor: 'rgba(128,128,128,0.4)',
-                      color: 'white',
-                      fontWeight: 'bold'
-                    }">
-                            ▼
-                        </el-button>
-                        <span></span>
-                        <el-button size="small" circle @click="moveChartOut(chart)" :style="{
-                      backgroundColor: 'rgba(128,128,128,0.4)',
-                      color: 'white',
-                      fontWeight: 'bold'
-                    }">
-                            ⨉
-                        </el-button>
-
                     </div>
                     <!-- 图表容器 -->
                     <div :id="'chart-' + chart" style="height: 50%;"></div>
