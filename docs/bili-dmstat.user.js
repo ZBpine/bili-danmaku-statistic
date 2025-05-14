@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.8.0
+// @version      1.8.1
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -40,6 +40,7 @@
         await addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
         await addScript('https://cdn.jsdelivr.net/npm/echarts@5');
         await addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js');
+        await addScript('https://cdn.jsdelivr.net/npm/segmentit@2.0.3/dist/umd/segmentit.min.js');
         await addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
         await addScript('https://cdn.jsdelivr.net/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js');
 
@@ -108,7 +109,16 @@
                                 }, 1500);
                             });
                         });
-
+                        function createCell(text, style = {}) {
+                            return h('div', {
+                                style: {
+                                    padding: '8px',
+                                    boxSizing: 'border-box',
+                                    borderRight: '1px solid #ebeef5',
+                                    ...style
+                                }
+                            }, text);
+                        }
                         return () =>
                             h('div', {
                                 class: { 'danmuku-table': true, 'danmuku-table--virtual': isVirtual.value },
@@ -121,15 +131,9 @@
                                         backgroundColor: '#fdfdfd', borderBottom: '1px solid #ebeef5'
                                     }
                                 }, [
-                                    h('div', {
-                                        style: { width: '80px', padding: '8px', borderRight: '1px solid #ebeef5' }
-                                    }, '时间'),
-                                    h('div', {
-                                        style: { flex: 1, padding: '8px', borderRight: '1px solid #ebeef5' }
-                                    }, '弹幕内容'),
-                                    h('div', {
-                                        style: { width: '160px', padding: '8px' }
-                                    }, '发送时间')
+                                    createCell('时间', { width: '80px' }),
+                                    createCell('弹幕内容', { flex: 1 }),
+                                    createCell('发送时间', { width: '160px', borderRight: 'none' })
                                 ]),
                                 // 内容区域
                                 h(ELEMENT_PLUS.ElScrollbar, { ref: scrollbarRef, onScroll }, {
@@ -155,20 +159,19 @@
                                                 onMouseleave: (e) => e.currentTarget.style.backgroundColor = '',
                                                 onClick: () => handleRowClick(item)
                                             }, [
-                                                h('div', {
-                                                    style: { width: '80px', padding: '8px', borderRight: '1px solid #ebeef5' }
-                                                }, formatProgress(item.progress)),
+                                                createCell(formatProgress(item.progress), { width: '80px' }),
                                                 h(ELEMENT_PLUS.ElTooltip, {
                                                     content: `发送用户: ${item.midHash}\n等级: ${item.weight}`,
                                                     placement: 'top-start'
                                                 }, {
-                                                    default: () => h('div', {
-                                                        style: { flex: 1, padding: '8px', borderRight: '1px solid #ebeef5' }
-                                                    }, item.content)
+                                                    default: () => createCell(item.content, {
+                                                        flex: 1,
+                                                        wordBreak: 'break-word',
+                                                        whiteSpace: 'normal',
+                                                        overflowWrap: 'anywhere',
+                                                    })
                                                 }),
-                                                h('div', {
-                                                    style: { width: '160px', padding: '8px' }
-                                                }, formatCtime(item.ctime))
+                                                createCell(formatCtime(item.ctime), { width: '160px', borderRight: 'none' })
                                             ])
                                         }
                                         ))
@@ -392,14 +395,40 @@
                     wordcloud: {
                         instance: null,
                         expandedH: false,
+                        segmentit: null,
+                        segCache: new Map(),
                         render(data) {
+                            var startTime = new Date().getTime();
+                            if (!this.segmentit) {
+                                this.segmentit = win.Segmentit.useDefault(new win.Segmentit.Segment());
+                                console.log('Segmentit初始化耗时：' + (new Date().getTime() - startTime) + 'ms');
+                            }
+                            if (!this.segCache) {
+                                this.segCache = new Map();
+                            }
                             const freq = {};
+
                             data.forEach(d => {
-                                d.content.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ').split(/\s+/).forEach(w => {
-                                    if (w.length >= 2) freq[w] = (freq[w] || 0) + 1;
+                                if (!d.content || d.content.length < 2) return;
+
+                                let words = this.segCache.get(d.content);
+                                if (!words) {
+                                    let safeContent = d.content.replace(/(.)\1{5,}/g, (m, c) => c.repeat(4));
+                                    words = this.segmentit
+                                        .doSegment(safeContent)
+                                        .map(w => w.w)
+                                        .filter(w => w.length >= 2);
+                                    this.segCache.set(d.content, words);
+                                }
+                                new Set(words).forEach(word => {
+                                    freq[word] = (freq[word] || 0) + 1;
                                 });
                             });
-                            const list = Object.entries(freq).map(([name, value]) => ({ name, value }));
+                            const list = Object.entries(freq)
+                                .map(([name, value]) => ({ name, value }))
+                                .sort((a, b) => b.value - a.value)
+                                .slice(0, 1000);
+                            console.log('Segmentit分词耗时：' + (new Date().getTime() - startTime) + 'ms');
                             this.instance.setOption({
                                 title: { text: '弹幕词云' },
                                 tooltip: {},
@@ -891,7 +920,7 @@
                     charts.user.locateInChart(row.midHash);
                 }
 
-                function renderChart(chart) {
+                async function renderChart(chart) {
                     const el = doc.getElementById('chart-' + chart);
                     if (!el) return;
 
@@ -915,7 +944,11 @@
                             });
                         }
                     }
-                    charts[chart].render(danmakuList.current);
+                    const result = charts[chart].render(danmakuList.current);
+                    if (result instanceof Promise) {
+                        await result;
+                    }
+                    await nextTick();
                 }
                 function disposeChart(chart) {
                     if (charts[chart].instance && charts[chart].instance.dispose) {
@@ -934,7 +967,7 @@
                         danmakuCount.value.filtered = danmakuList.current.length;
                         if (ifchart) {
                             for (const chart of chartsVisible.value) {
-                                renderChart(chart);
+                                await renderChart(chart);
                             }
                         }
                         await nextTick();
