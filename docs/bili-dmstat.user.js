@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.8.1
+// @version      1.8.2
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -40,7 +40,6 @@
         await addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
         await addScript('https://cdn.jsdelivr.net/npm/echarts@5');
         await addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js');
-        await addScript('https://cdn.jsdelivr.net/npm/segmentit@2.0.3/dist/umd/segmentit.min.js');
         await addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
         await addScript('https://cdn.jsdelivr.net/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js');
 
@@ -395,51 +394,131 @@
                     wordcloud: {
                         instance: null,
                         expandedH: false,
-                        segmentit: null,
-                        segCache: new Map(),
-                        render(data) {
-                            var startTime = new Date().getTime();
-                            if (!this.segmentit) {
-                                this.segmentit = win.Segmentit.useDefault(new win.Segmentit.Segment());
-                                console.log('Segmentit初始化耗时：' + (new Date().getTime() - startTime) + 'ms');
+                        segmentWorker: null,
+                        usingSegmentit: false,
+                        actions: [
+                            {
+                                key: 'deepSegment',
+                                icon: '📝',
+                                title: '使用深度分词',
+                                method: 'enableDeepSegment'
                             }
-                            if (!this.segCache) {
-                                this.segCache = new Map();
+                        ],
+                        async enableDeepSegment() {
+                            this.usingSegmentit = !this.usingSegmentit;
+                            try {
+                                loading.value = true;
+                                await nextTick();
+                                await this.render(danmakuList.current);
+                                ELEMENT_PLUS.ElMessage.success('已切换模式');
+                            } catch (err) {
+                                console.error(err);
+                                ELEMENT_PLUS.ElMessage.error('渲染错误');
+                            } finally {
+                                loading.value = false;
                             }
-                            const freq = {};
+                        },
+                        async initWorker() {
+                            if (this.segmentWorker) return;
 
-                            data.forEach(d => {
-                                if (!d.content || d.content.length < 2) return;
+                            const workerCode = `
+var startTime = new Date().getTime();
+importScripts('https://cdn.jsdelivr.net/npm/segmentit@2.0.3/dist/umd/segmentit.min.js');
+const segmentit = Segmentit.useDefault(new Segmentit.Segment());
+console.log('Segmentit初始化耗时：' + (new Date().getTime() - startTime) + 'ms');
 
-                                let words = this.segCache.get(d.content);
-                                if (!words) {
-                                    let safeContent = d.content.replace(/(.)\1{5,}/g, (m, c) => c.repeat(4));
-                                    words = this.segmentit
-                                        .doSegment(safeContent)
-                                        .map(w => w.w)
-                                        .filter(w => w.length >= 2);
-                                    this.segCache.set(d.content, words);
-                                }
-                                new Set(words).forEach(word => {
-                                    freq[word] = (freq[word] || 0) + 1;
+function compressRepeats(text, maxRepeat = 3) {
+    for (let len = 1; len <= 8; len++) {
+        const regex = new RegExp('((.{1,' + len + '}))\\\\1{' + maxRepeat + ',}', 'g');
+        text = text.replace(regex, (m, _1, word) => word.repeat(maxRepeat));
+    }
+    return text;
+}
+onmessage = function (e) {
+    startTime = new Date().getTime();
+    const data = e.data;
+    const freq = {};
+    for (const d of data) {
+        if (!d.content || d.content.length < 2) continue;
+        const safeContent = compressRepeats(d.content);
+        const words = segmentit
+            .doSegment(safeContent)
+            .map(w => w.w)
+            .filter(w => w.length >= 2);
+
+        new Set(words).forEach(word => {
+            freq[word] = (freq[word] || 0) + 1;
+        });
+    }
+    const list = Object.entries(freq)
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 1000);
+    console.log('Segmentit分词耗时：' + (new Date().getTime() - startTime) + 'ms');
+
+    postMessage(list);
+};
+`;
+                            const blob = new Blob([workerCode], { type: 'application/javascript' });
+                            this.segmentWorker = new Worker(URL.createObjectURL(blob));
+                        },
+                        async render(data) {
+                            if (!this.usingSegmentit) {
+                                const freq = {};
+                                data.forEach(d => {
+                                    if (!d.content) return;
+                                    const words = d.content.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, ' ')
+                                        .split(/\s+/).filter(w => w.length >= 2);
+                                    new Set(words).forEach(w => {
+                                        freq[w] = (freq[w] || 0) + 1;
+                                    });
                                 });
-                            });
-                            const list = Object.entries(freq)
-                                .map(([name, value]) => ({ name, value }))
-                                .sort((a, b) => b.value - a.value)
-                                .slice(0, 1000);
-                            console.log('Segmentit分词耗时：' + (new Date().getTime() - startTime) + 'ms');
-                            this.instance.setOption({
-                                title: { text: '弹幕词云' },
-                                tooltip: {},
-                                series: [{
-                                    type: 'wordCloud',
-                                    gridSize: 8,
-                                    sizeRange: [12, 40],
-                                    rotationRange: [0, 0],
-                                    shape: 'circle',
-                                    data: list
-                                }]
+                                const list = Object.entries(freq)
+                                    .map(([name, value]) => ({ name, value }))
+                                    .sort((a, b) => b.value - a.value)
+                                    .slice(0, 1000);
+
+                                this.instance.setOption({
+                                    title: { text: '弹幕词云' },
+                                    tooltip: {},
+                                    series: [{
+                                        type: 'wordCloud',
+                                        data: list,
+                                        gridSize: 8,
+                                        sizeRange: [12, 40],
+                                        rotationRange: [0, 0],
+                                        shape: 'circle',
+                                    }]
+                                });
+                                return;
+                            }
+                            // 深度模式：调用 Worker + Segmentit
+                            await this.initWorker();
+                            return new Promise((resolve, reject) => {
+                                const timeout = setTimeout(() => reject(new Error('词云分词超时')), 10000);
+                                this.segmentWorker.onmessage = (e) => {
+                                    clearTimeout(timeout);
+                                    const list = e.data;
+                                    this.instance.setOption({
+                                        title: { text: '弹幕词云[深度分词]' },
+                                        tooltip: {},
+                                        series: [{
+                                            type: 'wordCloud',
+                                            gridSize: 8,
+                                            sizeRange: [12, 40],
+                                            rotationRange: [0, 0],
+                                            shape: 'circle',
+                                            data: list
+                                        }]
+                                    });
+                                    resolve();
+                                };
+                                this.segmentWorker.onerror = (err) => {
+                                    clearTimeout(timeout);
+                                    console.error('[词云Worker错误]', err);
+                                    reject(err);
+                                };
+                                this.segmentWorker.postMessage(data);
                             });
                         },
                         async onClick({ params, applySubFilter }) {
@@ -683,11 +762,14 @@
                         icon: '▼',
                         title: '下移图表',
                         apply: () => true,
-                        handler: (chart) => {
+                        handler: async (chart) => {
                             const idx = chartsVisible.value.indexOf(chart);
                             if (idx < chartsVisible.value.length - 1) {
                                 chartsVisible.value.splice(idx, 1);
                                 chartsVisible.value.splice(idx + 1, 0, chart);
+                                await nextTick();
+                                const el = doc.getElementById('chart-' + chart);
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                             }
                         }
                     },
@@ -695,11 +777,14 @@
                         icon: '▲',
                         title: '上移图表',
                         apply: () => true,
-                        handler: (chart) => {
+                        handler: async (chart) => {
                             const idx = chartsVisible.value.indexOf(chart);
                             if (idx > 0) {
                                 chartsVisible.value.splice(idx, 1);
                                 chartsVisible.value.splice(idx - 1, 0, chart);
+                                await nextTick();
+                                const el = doc.getElementById('chart-' + chart);
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                             }
                         }
                     },
@@ -707,19 +792,25 @@
                         icon: '↻',
                         title: '刷新',
                         apply: chart => 'refresh' in charts[chart],
-                        handler: (chart) => {
+                        handler: async (chart) => {
+                            loading.value = true;
+                            await nextTick();
                             disposeChart(chart);
-                            renderChart(chart);
+                            await renderChart(chart);
+                            loading.value = false;
                         }
                     },
                     expandH: {
                         icon: '⇕',
                         title: '展开/收起',
                         apply: chart => 'expandedH' in charts[chart],
-                        handler: (chart) => {
+                        handler: async (chart) => {
+                            loading.value = true;
+                            await nextTick();
                             charts[chart].expandedH = !charts[chart].expandedH;
                             disposeChart(chart);
-                            renderChart(chart);
+                            await renderChart(chart);
+                            loading.value = false;
                         }
                     }
                 });
@@ -944,9 +1035,11 @@
                             });
                         }
                     }
-                    const result = charts[chart].render(danmakuList.current);
-                    if (result instanceof Promise) {
-                        await result;
+                    try {
+                        await charts[chart].render(danmakuList.current);
+                    } catch (err) {
+                        console.error(`图表${chart}渲染错误`, err);
+                        ELEMENT_PLUS.ElMessage.error(`图表${chart}渲染错误`);
                     }
                     await nextTick();
                 }
@@ -1115,11 +1208,11 @@
                                 icon,
                                 title,
                                 apply: chart => chart === chartName,
-                                handler: chart => {
-                                    if (typeof charts[chart]?.[method] === 'function') {
-                                        charts[chart][method]();
-                                    } else {
-                                        console.warn(`[chartsActions] ${chart}.${method} is not a function`);
+                                handler: async chart => {
+                                    try {
+                                        await charts[chart][method]();
+                                    } catch (e) {
+                                        console.error(`[chartsActions] ${chart}.${method} 执行失败`, e);
                                     }
                                 }
                             };
@@ -1411,7 +1504,7 @@
                     }">
                         <template v-for="(action, key) in chartsActions">
                             <template v-if="action.apply(chart)" :key="key">
-                                <el-button :title="action.title" @click="action.handler(chart)" :style="{
+                                <el-button :title="action.title" @click="() => action.handler(chart)" :style="{
                                     backgroundColor: 'rgba(128,128,128,0.4)',
                                     color: 'white',
                                     fontWeight: 'bold'
