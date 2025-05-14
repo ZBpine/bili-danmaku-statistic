@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.8.2
+// @version      1.8.3
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -1086,16 +1086,10 @@ onmessage = function (e) {
                     }
                 }
                 async function commitSubFilter() {
-                    try {
-                        if (Object.keys(currentSubFilt.value).length) {
-                            subFiltHistory.value.push({ ...currentSubFilt.value, enabled: true });
-                        }
-                        danmakuList.current = [...displayedDanmakus.value];
-                        await updateDispDanmakus(true);
-                    } catch (e) {
-                        console.error(e);
-                        ELEMENT_PLUS.ElMessage.error('提交子筛选失败');
+                    if (Object.keys(currentSubFilt.value).length) {
+                        subFiltHistory.value.push({ ...currentSubFilt.value, enabled: true });
                     }
+                    await applyActiveSubFilters();
                 }
                 async function clearSubFilter() {
                     if (currentSubFilt.value.chart) {
