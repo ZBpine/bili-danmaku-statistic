@@ -1,7 +1,16 @@
 addCustomChart('densityRange', {
+    refresh: true,
+    actions: [
+        {
+            key: 'clearRange',
+            icon: '-',
+            title: '清除范围',
+            method: 'clearSubFilt'
+        }
+    ],
     render(data) {
         const { formatProgress, videoData } = this.ctx;
-        const duration = videoData.value.duration * 1000;
+        const duration = videoData.duration * 1000;
         const minutes = duration / 1000 / 60;
 
         // 动态设置 bin 数量
@@ -138,6 +147,8 @@ addCustomChart('densityRange', {
         });
     },
     clearSubFilt() {
+        this.clickBuffer = [];
+        this.tempMarkLine = null;
         this.instance.setOption({
             series: [{
                 markLine: null,
