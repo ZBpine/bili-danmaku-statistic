@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.8.3
+// @version      1.8.4
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -835,6 +835,43 @@ onmessage = function (e) {
                     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
                 }
 
+                function downloadData() {
+                    const data = {
+                        bvid: dataParam.bvid,
+                        p: dataParam.p,
+                        epid: dataParam.epid,
+                        cid: dataParam.cid,
+                        videoData,
+                        episodeData: dataParam.episodeData,
+                        danmakuData: danmakuList.original,
+                        fetchtime: dataParam.fetchtime
+                    }
+
+                    let bTitle = 'Bilibili';
+                    if (data.bvid) bTitle = data.bvid;
+                    else if (data.epid) bTitle = 'ep' + data.epid;
+                    const filename = `${bTitle}.json`;
+                    const jsonString = JSON.stringify(data, null, 2); // null, 2 用于格式化 JSON，使其更易读
+
+                    // 创建一个包含 JSON 数据的 Blob 对象
+                    const blob = new Blob([jsonString], { type: 'application/json' });
+
+                    // 创建一个临时的 URL 对象
+                    const url = URL.createObjectURL(blob);
+
+                    // 创建一个隐藏的 <a> 元素用于触发下载
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename; // 设置下载的文件名
+                    document.body.appendChild(a);
+                    a.click(); // 模拟点击触发下载
+
+                    // 移除临时的 <a> 元素和 URL 对象
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+
+                    console.log(`已触发下载，文件名为: ${filename}`);
+                }
                 async function shareImage() {
                     const html2canvas = win.html2canvas;
                     const domtoimage = win.domtoimage;
@@ -1174,6 +1211,7 @@ onmessage = function (e) {
                             });
                         }
                     }
+                    videoData.fetchtime = dataParam?.fetchtime || Math.floor(Date.now() / 1000);
                     if (videoData?.pic?.startsWith('http:')) {
                         videoData.pic = videoData.pic.replace(/^http:/, 'https:');
                     }
@@ -1226,6 +1264,8 @@ onmessage = function (e) {
                             return;
                         }
                         chartDef.ctx = {
+                            ELEMENT_PLUS,
+                            ECHARTS,
                             chartsActions,
                             displayedDanmakus,
                             danmakuCount,
@@ -1277,7 +1317,8 @@ onmessage = function (e) {
                     formatProgress,
                     formatCtime,
                     formatTime,
-                    shareImage
+                    shareImage,
+                    downloadData
                 };
             },
             template: `
@@ -1344,7 +1385,7 @@ onmessage = function (e) {
                         {{ videoData.pubdate ? formatTime(videoData.pubdate) : '-' }}
                     </el-tag><br />
                     截止 <el-tag type="info" size="small" style="vertical-align: baseline;"> {{
-                        formatTime(Math.floor(Date.now()/1000)) }} </el-tag>
+                        formatTime(videoData.fetchtime) }} </el-tag>
                     播放量:
                     <el-tag type="primary" size="small" style="vertical-align: baseline;" v-if="videoData.stat">
                         {{ videoData.stat.view || '-' }}
@@ -1360,6 +1401,7 @@ onmessage = function (e) {
                         {{ danmakuCount.origin }}
                     </el-link>
                     条
+                    <action-tag type="primary" @click="downloadData" title="下载所有数据">📥</action-tag>
                 </p>
                 <p style="
                     background-color: #f4faff;
@@ -1818,12 +1860,12 @@ onmessage = function (e) {
             this.bvid = null;
             this.p = null;
             this.epid = null;
-            this.type = null;
             this.cid = null;
             this.videoData = null;
             this.episodeData = null;
             this.danmakuData = null;
             this.danmakuXmlText = null;
+            this.fetchtime = null;
             this.logStyle = {
                 tag: 'Danmaku Statistic',
                 style: 'background: #00a2d8; color: white; padding: 2px 6px; border-radius: 3px;',
@@ -1922,6 +1964,7 @@ onmessage = function (e) {
                 if (json && json.data) {
                     this.videoData = json.data;
                     this.logTag('获取视频信息成功');
+                    this.fetchtime = Math.floor(Date.now() / 1000);
                     return this.videoData;
                 }
                 else throw new Error(`视频信息接口请求失败，json：${json}`);
@@ -1938,6 +1981,7 @@ onmessage = function (e) {
                 if (json && json.result) {
                     this.episodeData = json.result;
                     this.logTag('获取剧集信息成功');
+                    this.fetchtime = Math.floor(Date.now() / 1000);
                     return this.episodeData;
                 }
                 else throw new Error(`剧集信息接口请求失败，json：${json}`);
@@ -1957,6 +2001,7 @@ onmessage = function (e) {
                 this.danmakuXmlText = await res.text();
                 this.danmakuData = this.parseDanmakuXml(this.danmakuXmlText);
                 this.logTag('获取弹幕数据成功');
+                this.fetchtime = Math.floor(Date.now() / 1000);
                 return this.danmakuData;
             } catch (err) {
                 this.logTagError('获取弹幕数据失败:', err);
