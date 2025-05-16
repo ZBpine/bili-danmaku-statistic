@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.8.4
+// @version      1.9.0
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -14,8 +14,23 @@
 // @run-at       document-end
 // ==/UserScript==
 
-(function () {
+(async () => {
     'use strict';
+
+    class ResourceLoader {
+        constructor(doc = document) {
+            this.doc = doc;
+        }
+        addEl(tag, attrs = {}, parent = this.doc.head) {
+            const el = this.doc.createElement(tag);
+            Object.assign(el, attrs);
+            parent.appendChild(el);
+            return el;
+        }
+        addScript(src) { return new Promise(resolve => { this.addEl('script', { src, onload: resolve }); }); }
+        addCss(href) { this.addEl('link', { rel: 'stylesheet', href }); }
+        addStyle(cssText) { this.addEl('style', { textContent: cssText }); }
+    }
 
     // iframe里初始化统计面板应用
     async function initIframeApp(iframe, dataParam, panelInfoParam) {
@@ -23,25 +38,18 @@
         const win = iframe.contentWindow;
 
         // 引入外部库
-        const addScript = (src) => new Promise(resolve => {
-            const script = doc.createElement('script');
-            script.src = src;
-            script.onload = resolve;
-            doc.head.appendChild(script);
-        });
-        const addCss = (href) => {
-            const link = doc.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = href;
-            doc.head.appendChild(link);
-        };
-        addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css');
-        await addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js');
-        await addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
-        await addScript('https://cdn.jsdelivr.net/npm/echarts@5');
-        await addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js');
-        await addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
-        await addScript('https://cdn.jsdelivr.net/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js');
+        const loader = new ResourceLoader(doc);
+        loader.addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css');
+        await loader.addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js');
+        await loader.addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
+        await loader.addScript('https://cdn.jsdelivr.net/npm/echarts@5');
+        await loader.addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js');
+        await loader.addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
+        await loader.addScript('https://cdn.jsdelivr.net/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js');
+        loader.addStyle(`.base { vertical-align: baseline; }`);
+
+        const DanmukuTableFactory = (await import('https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/DanmukuTable.js')).default;
+        const DanmukuTable = DanmukuTableFactory(win.Vue, win.ElementPlus);
 
         // 创建挂载点
         const appRoot = doc.createElement('div');
@@ -50,149 +58,20 @@
         doc.body.appendChild(appRoot);
 
         // 挂载Vue
-        const { createApp, ref, reactive, onMounted, nextTick, h, computed, watch } = win.Vue;
+        const { createApp, ref, reactive, onMounted, nextTick, h, computed } = win.Vue;
         const ELEMENT_PLUS = win.ElementPlus;
         const ECHARTS = win.echarts;
         const app = createApp({
             setup() {
-                app.component('DanmukuTable', {
-                    props: {
-                        items: Array,
-                        itemHeight: {
-                            type: Number,
-                            default: 42
-                        },
-                        virtualThreshold: {
-                            type: Number,
-                            default: 2400
-                        },
-                        scrollToTime: Number
-                    },
-                    setup(props) {
-                        const scrollTop = ref(0);
-                        const scrollbarRef = ref(null);
-                        const isVirtual = computed(() => props.items.length > props.virtualThreshold);
-                        const start = computed(() => isVirtual.value ? Math.floor(scrollTop.value / props.itemHeight) : 0);
-                        const visibleCount = computed(() => isVirtual.value ? 50 : props.items.length);
-                        const visibleItems = computed(() =>
-                            props.items.slice(start.value, start.value + visibleCount.value)
-                        );
-                        const offsetTop = computed(() => isVirtual.value ? start.value * props.itemHeight : 0);
-                        const onScroll = ({ scrollTop: st }) => {
-                            scrollTop.value = st;
-                        };
-                        const highlightedRowIndex = ref(null);
-
-                        watch(() => props.scrollToTime, (val) => {
-                            if (typeof val !== 'number') return; if (!props.items.length) return;
-                            const idx = props.items.reduce((closestIdx, item, i) => {
-                                const currentDiff = Math.abs(item.progress - val);
-                                const closestDiff = Math.abs(props.items[closestIdx]?.progress - val);
-                                return currentDiff < closestDiff ? i : closestIdx;
-                            }, 0);
-                            nextTick(() => {
-                                if (isVirtual.value) {
-                                    const top = Math.max(0, idx - 3) * props.itemHeight;
-                                    scrollbarRef.value?.wrapRef?.scrollTo?.({
-                                        top,
-                                        behavior: 'smooth'
-                                    });
-                                } else {
-                                    const row = scrollbarRef.value?.$el?.querySelectorAll('.danmaku-row')[idx];
-                                    row?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-                                }
-                                highlightedRowIndex.value = idx;
-                                // 清除高亮
-                                setTimeout(() => {
-                                    highlightedRowIndex.value = null;
-                                }, 1500);
-                            });
-                        });
-                        function createCell(text, style = {}) {
-                            return h('div', {
-                                style: {
-                                    padding: '8px',
-                                    boxSizing: 'border-box',
-                                    borderRight: '1px solid #ebeef5',
-                                    ...style
-                                }
-                            }, text);
-                        }
-                        return () =>
-                            h('div', {
-                                class: { 'danmuku-table': true, 'danmuku-table--virtual': isVirtual.value },
-                                style: { display: 'flex', flexDirection: 'column', border: '1px solid #ebeef5', minHeight: 0 }
-                            }, [
-                                // 表头
-                                h('div', {
-                                    style: {
-                                        display: 'flex', fontWeight: 'bold', color: '#909399',
-                                        backgroundColor: '#fdfdfd', borderBottom: '1px solid #ebeef5'
-                                    }
-                                }, [
-                                    createCell('时间', { width: '80px' }),
-                                    createCell('弹幕内容', { flex: 1 }),
-                                    createCell('发送时间', { width: '160px', borderRight: 'none' })
-                                ]),
-                                // 内容区域
-                                h(ELEMENT_PLUS.ElScrollbar, { ref: scrollbarRef, onScroll }, {
-                                    default: () => h('div', {
-                                        style: {
-                                            height: isVirtual.value ? (props.items.length * props.itemHeight + 'px') : 'auto',
-                                            position: 'relative'
-                                        }
-                                    }, [
-                                        h('div', {
-                                            style: { transform: `translateY(${offsetTop.value}px)` }
-                                        }, visibleItems.value.map((item, i) => {
-                                            const isHighlighted = start.value + i === highlightedRowIndex.value;
-                                            return h('div', {
-                                                class: 'danmaku-row',
-                                                style: {
-                                                    display: 'flex',
-                                                    borderBottom: '1px solid #ebeef5',
-                                                    transition: 'background-color 0.2s',
-                                                    backgroundColor: isHighlighted ? '#ecf5ff' : undefined
-                                                },
-                                                onMouseenter: (e) => e.currentTarget.style.backgroundColor = '#f5f7fa',
-                                                onMouseleave: (e) => e.currentTarget.style.backgroundColor = '',
-                                                onClick: () => handleRowClick(item)
-                                            }, [
-                                                createCell(formatProgress(item.progress), { width: '80px' }),
-                                                h(ELEMENT_PLUS.ElTooltip, {
-                                                    content: `发送用户: ${item.midHash}\n等级: ${item.weight}`,
-                                                    placement: 'top-start'
-                                                }, {
-                                                    default: () => createCell(item.content, {
-                                                        flex: 1,
-                                                        wordBreak: 'break-word',
-                                                        whiteSpace: 'normal',
-                                                        overflowWrap: 'anywhere',
-                                                    })
-                                                }),
-                                                createCell(formatCtime(item.ctime), { width: '160px', borderRight: 'none' })
-                                            ])
-                                        }
-                                        ))
-                                    ])
-                                })
-                            ]);
-                    }
-                });
+                app.component('DanmukuTable', DanmukuTable);
                 app.component('ImagePopoverLink', {
                     props: {
-                        imgSrc: String, // 图片地址
-                        alt: String,    // 图片描述
-                        width: { type: Number, default: 100 },
-                        height: { type: Number, default: 100 },
+                        imgSrc: String, alt: String, width: Number, height: Number,
                         rounded: { type: Boolean, default: false },
                         linkStyle: { type: String, default: '' }
                     },
                     setup(props, { slots }) {
-                        const imgStyle = computed(() => ({
-                            maxWidth: '100%', maxHeight: '100%',
-                            borderRadius: props.rounded ? '50%' : '0%'
-                        }));
+                        const imgStyle = computed(() => ({ maxWidth: '100%', maxHeight: '100%', borderRadius: props.rounded ? '50%' : '0%' }));
                         return () => {
                             if (!props.imgSrc) return null;
                             return h(ELEMENT_PLUS.ElPopover, {
@@ -200,13 +79,9 @@
                                 popperStyle: `width: ${props.width}px; height: ${props.height}px; padding: 10px; box-sizing: content-box;`
                             }, {
                                 default: () => h('div', {
-                                    style: {
-                                        display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: '100%'
-                                    }
+                                    style: { display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: '100%' }
                                 }, [
-                                    h('img', {
-                                        src: props.imgSrc, alt: props.alt, style: imgStyle.value
-                                    })
+                                    h('img', { src: props.imgSrc, alt: props.alt, style: imgStyle.value })
                                 ]),
                                 reference: () => h(ELEMENT_PLUS.ElLink, {
                                     href: props.imgSrc, target: '_blank', type: 'primary', style: props.linkStyle
@@ -216,11 +91,7 @@
                     }
                 });
                 app.component('ActionTag', {
-                    props: {
-                        type: { type: String, default: 'info' },
-                        title: String,
-                        onClick: Function
-                    },
+                    props: { type: { type: String, default: 'info' }, title: String, onClick: Function },
                     setup(props, { slots }) {
                         return () =>
                             h(win.ElementPlus.ElTag, {
@@ -232,9 +103,30 @@
                             }, () => slots.default ? slots.default() : '');
                     }
                 });
+                app.component('InfoLine', {
+                    props: { label: String, suffix: String, value: Object, href: String, type: String },
+                    setup(props) {
+                        const isLink = !!props.href;
+                        const finalType = props.type || (isLink ? 'primary' : 'info');
+                        return () => {
+                            return [
+                                props.label ? `${props.label} ` : ' ',
+                                isLink
+                                    ? h(ELEMENT_PLUS.ElLink, {
+                                        href: props.href, target: '_blank', type: finalType, style: 'vertical-align: baseline;'
+                                    }, () => String(props.value))
+                                    : h(ELEMENT_PLUS.ElTag, {
+                                        type: finalType, size: 'small', style: 'vertical-align: baseline;'
+                                    }, () => String(props.value)),
+                                props.suffix ? ` ${props.suffix}` : ' '
+                            ];
+                        };
+                    }
+                });
 
                 const converter = new BiliMidHashConverter();
                 const displayedDanmakus = ref([]);
+                const excludeFilter = ref(false);
                 const filterText = ref('^(哈|呵|h|ha|H|HA|233+)+$');
                 const currentFilt = ref('');
                 const currentSubFilt = ref({});
@@ -540,6 +432,34 @@ onmessage = function (e) {
                     density: {
                         instance: null,
                         refresh: true,
+                        rangeMode: false,
+                        clickBuffer: [],
+                        actions: [
+                            {
+                                key: 'toggleRange',
+                                icon: '🧭',
+                                title: '切换范围选择模式',
+                                method: 'toggleRangeMode'
+                            },
+                            {
+                                key: 'clearRange',
+                                icon: '-',
+                                title: '清除范围',
+                                method: 'clearSubFilt'
+                            }
+                        ],
+                        toggleRangeMode() {
+                            this.rangeMode = !this.rangeMode;
+                            this.clickBuffer = [];
+                            this.instance.setOption({
+                                title: { text: '弹幕密度分布' + (this.rangeMode ? '[范围模式]' : '') },
+                                series: [{
+                                    markLine: null,
+                                    markArea: null
+                                }]
+                            });
+                            ELEMENT_PLUS.ElMessage.success(`已${this.rangeMode ? '进入' : '退出'}范围选择模式`);
+                        },
                         render(data) {
                             const duration = videoData.duration * 1000; // ms
                             const minutes = duration / 1000 / 60;
@@ -567,7 +487,7 @@ onmessage = function (e) {
                             }
 
                             this.instance.setOption({
-                                title: { text: '弹幕密度分布' },
+                                title: { text: '弹幕密度分布' + (this.rangeMode ? '[范围模式]' : '') },
                                 tooltip: {
                                     trigger: 'axis',
                                     formatter: function (params) {
@@ -592,6 +512,8 @@ onmessage = function (e) {
                                     name: '弹幕数量'
                                 },
                                 series: [{
+                                    markLine: null,
+                                    markArea: null,
                                     data: dataPoints,
                                     type: 'line',
                                     smooth: true,
@@ -599,9 +521,90 @@ onmessage = function (e) {
                                 }]
                             });
                         },
-                        async onClick({ params }) {
-                            const targetTime = params.value[0] * 1000;
-                            scrollToTime.value = targetTime;
+                        async onClick({ params, applySubFilter }) {
+                            const sec = params.value[0];
+                            if (!this.rangeMode) {
+                                // 默认模式：直接跳转
+                                scrollToTime.value = sec * 1000;
+                                return;
+                            }
+
+                            this.clickBuffer.push(sec);
+                            // 第一次点击，添加辅助线
+                            if (this.clickBuffer.length === 1) {
+                                this.instance.setOption({
+                                    series: [{
+                                        markLine: {
+                                            silent: true,
+                                            animation: false,
+                                            symbol: 'none',
+                                            data: [
+                                                {
+                                                    xAxis: sec,
+                                                    lineStyle: {
+                                                        color: 'red',
+                                                        type: 'dashed'
+                                                    },
+                                                    label: {
+                                                        formatter: `起点：${formatProgress(sec * 1000)}`,
+                                                        position: 'end',
+                                                        color: 'red'
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }]
+                                });
+                                ELEMENT_PLUS.ElMessage.info('请点击结束时间');
+                                return;
+                            }
+
+                            // 第二次点击，清除临时标记 + 应用时间范围筛选
+                            const [startSec, endSec] = this.clickBuffer.sort((a, b) => a - b);
+                            const startMs = startSec * 1000;
+                            const endMs = endSec * 1000;
+                            this.clickBuffer = [];
+
+                            // 使用 markArea 高亮选中范围
+                            this.instance.setOption({
+                                series: [{
+                                    markLine: null,
+                                    markArea: {
+                                        silent: true,
+                                        itemStyle: {
+                                            color: 'rgba(255, 100, 100, 0.2)'
+                                        },
+                                        data: [
+                                            [
+                                                { xAxis: startSec },
+                                                { xAxis: endSec }
+                                            ]
+                                        ]
+                                    }
+                                }]
+                            });
+
+                            await applySubFilter({
+                                value: `${formatProgress(startMs)} ~ ${formatProgress(endMs)}`,
+                                filterFn: (data) => data.filter(d => d.progress >= startMs && d.progress <= endMs),
+                                labelVNode: (h) => h('span', [
+                                    '时间段：',
+                                    h(ELEMENT_PLUS.ElTag, {
+                                        type: 'info',
+                                        size: 'small',
+                                        style: 'vertical-align: baseline;'
+                                    }, `${formatProgress(startMs)} ~ ${formatProgress(endMs)}`)
+                                ])
+                            });
+                        },
+                        clearSubFilt() {
+                            this.clickBuffer = [];
+                            this.instance.setOption({
+                                series: [{
+                                    markLine: null,
+                                    markArea: null
+                                }]
+                            });
                         }
                     },
                     date: {
@@ -822,14 +825,6 @@ onmessage = function (e) {
                     const sec = String(s % 60).padStart(2, '0');
                     return `${min}:${sec}`;
                 }
-                function formatCtime(t) {
-                    const d = new Date(t * 1000);
-                    return d.getFullYear() + '-' +
-                        String(d.getMonth() + 1).padStart(2, '0') + '-' +
-                        String(d.getDate()).padStart(2, '0') + ' ' +
-                        String(d.getHours()).padStart(2, '0') + ':' +
-                        String(d.getMinutes()).padStart(2, '0');
-                }
                 function formatTime(ts) {
                     const d = new Date(ts * 1000);
                     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -846,7 +841,6 @@ onmessage = function (e) {
                         danmakuData: danmakuList.original,
                         fetchtime: dataParam.fetchtime
                     }
-
                     let bTitle = 'Bilibili';
                     if (data.bvid) bTitle = data.bvid;
                     else if (data.epid) bTitle = 'ep' + data.epid;
@@ -1092,6 +1086,9 @@ onmessage = function (e) {
                     await nextTick();
                     await new Promise(resolve => setTimeout(resolve, 10)); //等待v-loading渲染
                     try {
+                        if (typeof panelInfo.value?.updateCallback === 'function') {
+                            panelInfo.value.updateCallback(danmakuList.current);
+                        }
                         displayedDanmakus.value = data;
                         currentSubFilt.value = subFilt;
                         danmakuCount.value.filtered = danmakuList.current.length;
@@ -1142,7 +1139,9 @@ onmessage = function (e) {
                     try {
                         subFiltHistory.value = [];
                         const regex = new RegExp(filterText.value, 'i');
-                        danmakuList.filtered = danmakuList.original.filter(d => regex.test(d.content));
+                        danmakuList.filtered = danmakuList.original.filter(d =>
+                            excludeFilter.value ? !regex.test(d.content) : regex.test(d.content)
+                        );
                         danmakuList.current = [...danmakuList.filtered];
                         currentFilt.value = regex;
                         await updateDispDanmakus(true);
@@ -1273,7 +1272,6 @@ onmessage = function (e) {
                             videoData,
                             registerChartAction,
                             formatProgress,
-                            formatCtime,
                             formatTime
                         }
                         registerChartAction(chartName, chartDef);
@@ -1295,6 +1293,7 @@ onmessage = function (e) {
                 return {
                     h,
                     displayedDanmakus,
+                    excludeFilter,
                     filterText,
                     applyFilter,
                     resetFilter,
@@ -1314,8 +1313,7 @@ onmessage = function (e) {
                     clearSubFilter,
                     commitSubFilter,
                     applyActiveSubFilters,
-                    formatProgress,
-                    formatCtime,
+                    handleRowClick,
                     formatTime,
                     shareImage,
                     downloadData
@@ -1349,27 +1347,17 @@ onmessage = function (e) {
 
                 <p style="margin: 10px;">
                     <template v-if="videoData.epid">
-                        EPID：
-                        <el-link v-if="videoData.epid"
-                            :href="'https://www.bilibili.com/bangumi/play/ep' + videoData.epid" target="_blank"
-                            type="primary" style="vertical-align: baseline;">
-                            ep{{ videoData.epid }}
-                        </el-link><br />
+                        <info-line label="EPID：" :value="videoData.epid"
+                            :href="'https://www.bilibili.com/bangumi/play/ep' + videoData.epid" /><br />
                     </template>
                     <template v-else>
-                        BVID：
-                        <el-link v-if="videoData.bvid" :href="'https://www.bilibili.com/video/' + videoData.bvid"
-                            target="_blank" type="primary" style="vertical-align: baseline;">
-                            {{ videoData.bvid }}
-                        </el-link><br />
+                        <info-line v-if="videoData.bvid" label="BVID：" :value="videoData.bvid"
+                            :href="'https://www.bilibili.com/video/' + videoData.bvid" /><br />
                     </template>
-                    UP主：
-                    <el-link v-if="videoData.owner" :href="'https://space.bilibili.com/' + videoData.owner.mid"
-                        target="_blank" type="primary" style="vertical-align: baseline;">
-                        {{ videoData.owner.name }}
-                    </el-link>
-                    <image-popover-link :imgSrc="videoData.owner?.face" alt="UP主头像" :rounded="true" :width="100"
-                        :height="100" linkStyle="margin-left: 8px; vertical-align: -2px;">
+                    <info-line v-if="videoData.owner" label="UP主：" :value="videoData.owner.name"
+                        :href="'https://space.bilibili.com/' + videoData.owner.mid" />
+                    <image-popover-link :imgSrc="videoData.owner?.face" alt="UP主头像" :width="100" :height="100"
+                        :rounded="true" linkStyle="margin-left: 8px; vertical-align: -2px;">
                         <svg t="1746010657723" class="icon" viewBox="0 0 1024 1024" version="1.1"
                             xmlns="http://www.w3.org/2000/svg" p-id="10144" width="16" height="16">
                             <path
@@ -1380,27 +1368,12 @@ onmessage = function (e) {
                                 fill="#409eff" p-id="10146"></path>
                         </svg>
                     </image-popover-link><br />
-                    发布时间：
-                    <el-tag type="info" size="small" style="vertical-align: baseline;">
-                        {{ videoData.pubdate ? formatTime(videoData.pubdate) : '-' }}
-                    </el-tag><br />
-                    截止 <el-tag type="info" size="small" style="vertical-align: baseline;"> {{
-                        formatTime(videoData.fetchtime) }} </el-tag>
-                    播放量:
-                    <el-tag type="primary" size="small" style="vertical-align: baseline;" v-if="videoData.stat">
-                        {{ videoData.stat.view || '-' }}
-                    </el-tag><br />
-                    总弹幕数:
-                    <el-tag type="primary" size="small" style="vertical-align: baseline;" v-if="videoData.stat">
-                        {{ videoData.stat.danmaku || '-' }}
-                    </el-tag>
-                    ，载入实时弹幕
-                    <el-link v-if="videoData.owner"
-                        :href="'https://api.bilibili.com/x/v1/dm/list.so?oid=' + videoData.cid" target="_blank"
-                        type="primary" style="vertical-align: baseline;" title="下载弹幕">
-                        {{ danmakuCount.origin }}
-                    </el-link>
-                    条
+                    <info-line label="发布时间：" :value="videoData.pubdate ? formatTime(videoData.pubdate) : '-'" /><br />
+                    <info-line label="截止" :value="videoData.fetchtime ? formatTime(videoData.fetchtime) : '-'" />
+                    <info-line type="primary" label="播放量：" :value="videoData.stat?.view || '-'" /><br />
+                    <info-line type="primary" label="总弹幕数：" suffix="，" :value="videoData.stat?.danmaku || '-'" />
+                    <info-line v-if="videoData.owner" label="载入实时弹幕" suffix="条" :value="danmakuCount.origin"
+                        :href="'https://api.bilibili.com/x/v1/dm/list.so?oid=' + videoData.cid" />
                     <action-tag type="primary" @click="downloadData" title="下载所有数据">📥</action-tag>
                 </p>
                 <p style="
@@ -1411,9 +1384,9 @@ onmessage = function (e) {
                     color: #333;
                 ">
                     <template v-if="currentFilt">
-                        筛选：
-                        <el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentFilt }}</el-tag>
-                        <br />
+                        <info-line :label="excludeFilter ? '排除：' : '筛选：'" :value="currentFilt" />
+                        <el-checkbox v-model="excludeFilter" @change="applyFilter"
+                            style="margin-left: 4px; vertical-align: middle;">排除模式</el-checkbox><br />
                     </template>
                     <template v-if="subFiltHistory.length" style="margin-top: 10px;">
                         <span v-for="(item, idx) in subFiltHistory" :key="idx" style="margin-right: 6px;">
@@ -1463,7 +1436,7 @@ onmessage = function (e) {
                 </div>
                 <el-collapse-transition>
                     <danmuku-table v-show="isTableVisible" :items="displayedDanmakus" :virtual-threshold="800"
-                        :scroll-to-time="scrollToTime" />
+                        :scroll-to-time="scrollToTime" @row-click="handleRowClick" />
                 </el-collapse-transition>
             </div>
         </div>
@@ -1568,23 +1541,10 @@ onmessage = function (e) {
         const doc = iframe.contentDocument;
         const win = iframe.contentWindow;
 
-        // 引入外部库
-        const addScript = (src) => new Promise(resolve => {
-            const script = doc.createElement('script');
-            script.src = src;
-            script.onload = resolve;
-            doc.head.appendChild(script);
-        });
-        const addCss = (href) => {
-            const link = doc.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = href;
-            doc.head.appendChild(link);
-        };
-
-        addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css');
-        await addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js');
-        await addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
+        const loader = new ResourceLoader(doc);
+        loader.addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css');
+        await loader.addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js');
+        await loader.addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
 
         const appRoot = doc.createElement('div');
         appRoot.id = 'user-space-app';
@@ -1641,21 +1601,15 @@ onmessage = function (e) {
     <el-card>
         <div style="display: flex; gap: 20px;">
             <!-- 头像 -->
-            <a :href="card.face" target="_blank" title="点击查看头像原图">
-                <el-avatar :size="100" :src="card.face" />
-            </a>
-
+            <a :href="card.face" target="_blank" title="点击查看头像原图"><el-avatar :size="100" :src="card.face" /></a>
             <!-- 用户信息 -->
             <div style="flex: 1;">
                 <h2 style="margin: 0;">
                     {{ card.name }}
                     <el-tag v-if="card.sex !== '保密'" size="small" style="margin-left: 10px;">{{ card.sex }}</el-tag>
                     <el-tag v-if="card.level_info" type="success" size="small">
-                        LV{{ card.level_info.current_level }}
-                    </el-tag>
-                    <el-tag v-if="card.vip?.vipStatus === 1" type="warning" size="small">
-                        大会员
-                    </el-tag>
+                        LV{{ card.level_info.current_level}}</el-tag>
+                    <el-tag v-if="card.vip?.vipStatus === 1" type="warning" size="small">大会员</el-tag>
                 </h2>
 
                 <!-- 签名 -->
@@ -1667,15 +1621,11 @@ onmessage = function (e) {
                 <p>
                     <b>MID：</b>
                     <el-link :href="'https://space.bilibili.com/' + card.mid" target="_blank" type="primary"
-                        style="vertical-align: baseline;">
-                        {{ card.mid }}
-                    </el-link>
+                        style="vertical-align: baseline;">{{ card.mid }}</el-link>
                     <el-tooltip content="复制midHash" placement="top">
                         <el-tag size="small"
                             style="margin-left: 6px; vertical-align: baseline; cursor: pointer; background-color: #f5f7fa; color: #909399;"
-                            @click="copyToClipboard(card.midHash)">
-                            Hash: {{ card.midHash }}
-                        </el-tag>
+                            @click="copyToClipboard(card.midHash)">Hash: {{ card.midHash }}</el-tag>
                     </el-tooltip>
                 </p>
 
@@ -1695,9 +1645,7 @@ onmessage = function (e) {
                 <p v-if="card.nameplate?.name">
                     <b>勋章：</b>
                     <a :href="card.nameplate.image" target="_blank" title="点击查看大图">
-                        <el-tag size="small" style="vertical-align: baseline;">
-                            {{ card.nameplate.name }}
-                        </el-tag>
+                        <el-tag size="small" style="vertical-align: baseline;">{{ card.nameplate.name }}</el-tag>
                     </a>
                     <el-text type="info" size="small" style="margin-left: 6px;">
                         {{ card.nameplate.level }} - {{ card.nameplate.condition }}
@@ -1717,18 +1665,10 @@ onmessage = function (e) {
         <!-- 指标数据 -->
         <el-divider></el-divider>
         <el-row :gutter="20" justify="space-between">
-            <el-col :span="6">
-                <el-statistic title="关注数" :value="card.friend" />
-            </el-col>
-            <el-col :span="6">
-                <el-statistic title="粉丝数" :value="stats.follower" />
-            </el-col>
-            <el-col :span="6">
-                <el-statistic title="获赞数" :value="stats.like_num" />
-            </el-col>
-            <el-col :span="6">
-                <el-statistic title="稿件数" :value="stats.archive_count" />
-            </el-col>
+            <el-col :span="6"><el-statistic title="关注数" :value="card.friend" /></el-col>
+            <el-col :span="6"><el-statistic title="粉丝数" :value="stats.follower" /></el-col>
+            <el-col :span="6"><el-statistic title="获赞数" :value="stats.like_num" /></el-col>
+            <el-col :span="6"><el-statistic title="稿件数" :value="stats.archive_count" /></el-col>
         </el-row>
     </el-card>
 </div>
@@ -1737,311 +1677,12 @@ onmessage = function (e) {
         app.use(win.ElementPlus);
         app.mount('#user-space-app');
     }
-    // B站mid与hash转换
-    class BiliMidHashConverter {
-        constructor() {
-            this.crcTable = this._createCRCTable();
-        }
-        _createCRCTable() {
-            const table = new Array(256);
-            const CRCPOLYNOMIAL = 0xEDB88320;
-            var crcreg,
-                i, j;
-            for (i = 0; i < 256; ++i) {
-                crcreg = i;
-                for (j = 0; j < 8; ++j) {
-                    if ((crcreg & 1) != 0) {
-                        crcreg = CRCPOLYNOMIAL ^ (crcreg >>> 1);
-                    }
-                    else {
-                        crcreg >>>= 1;
-                    }
-                }
-                table[i] = crcreg;
-            }
-            return table;
-        }
-
-        /**
-         * mid → hash（用于弹幕中 midHash 显示）
-         */
-        midToHash(mid) {
-            let crc = 0xFFFFFFFF;
-            const input = mid.toString();
-            for (let i = 0; i < input.length; i++) {
-                const byte = input.charCodeAt(i);
-                crc = (crc >>> 8) ^ this.crcTable[(crc ^ byte) & 0xFF];
-            }
-            return ((crc ^ 0xFFFFFFFF) >>> 0).toString(16);
-        }
-
-        /**
-         * 尝试通过 midHash 反查 mid（暴力逆向）
-         * 若失败返回 -1
-         * @param {string} hashStr 16进制字符串（如 '6c2b67a9'）
-         * @param {number} maxTry 最大尝试次数（默认一亿）
-         */
-        hashToMid(hashStr, maxTry = 100_000_000) {
-            var index = new Array(4);
-
-            var ht = parseInt('0x' + hashStr) ^ 0xffffffff,
-                snum, i, lastindex, deepCheckData;
-            for (i = 3; i >= 0; i--) {
-                index[3 - i] = this._getCRCIndex(ht >>> (i * 8));
-                snum = this.crcTable[index[3 - i]];
-                ht ^= snum >>> ((3 - i) * 8);
-            }
-            for (i = 0; i < maxTry; i++) {
-                lastindex = this._crc32LastIndex(i);
-                if (lastindex == index[3]) {
-                    deepCheckData = this._deepCheck(i, index)
-                    if (deepCheckData[0])
-                        break;
-                }
-            }
-
-            if (i == 100000000)
-                return -1;
-            return i + '' + deepCheckData[1];
-        }
-        _crc32(input) {
-            if (typeof (input) != 'string')
-                input = input.toString();
-            var crcstart = 0xFFFFFFFF, len = input.length, index;
-            for (var i = 0; i < len; ++i) {
-                index = (crcstart ^ input.charCodeAt(i)) & 0xff;
-                crcstart = (crcstart >>> 8) ^ this.crcTable[index];
-            }
-            return crcstart;
-        }
-        _crc32LastIndex(input) {
-            if (typeof (input) != 'string')
-                input = input.toString();
-            var crcstart = 0xFFFFFFFF, len = input.length, index;
-            for (var i = 0; i < len; ++i) {
-                index = (crcstart ^ input.charCodeAt(i)) & 0xff;
-                crcstart = (crcstart >>> 8) ^ this.crcTable[index];
-            }
-            return index;
-        }
-        _getCRCIndex(t) {
-            //if(t>0)
-            //t-=256;
-            for (var i = 0; i < 256; i++) {
-                if (this.crcTable[i] >>> 24 == t)
-                    return i;
-            }
-            return -1;
-        }
-        _deepCheck(i, index) {
-            var tc = 0x00, str = '',
-                hash = this._crc32(i);
-            tc = hash & 0xff ^ index[2];
-            if (!(tc <= 57 && tc >= 48))
-                return [0];
-            str += tc - 48;
-            hash = this.crcTable[index[2]] ^ (hash >>> 8);
-            tc = hash & 0xff ^ index[1];
-            if (!(tc <= 57 && tc >= 48))
-                return [0];
-            str += tc - 48;
-            hash = this.crcTable[index[1]] ^ (hash >>> 8);
-            tc = hash & 0xff ^ index[0];
-            if (!(tc <= 57 && tc >= 48))
-                return [0];
-            str += tc - 48;
-            hash = this.crcTable[index[0]] ^ (hash >>> 8);
-            return [1, str];
-        }
-    }
-    // 获取数据
-    class BiliDanmakuUtils {
-        constructor() {
-            this.bvid = null;
-            this.p = null;
-            this.epid = null;
-            this.cid = null;
-            this.videoData = null;
-            this.episodeData = null;
-            this.danmakuData = null;
-            this.danmakuXmlText = null;
-            this.fetchtime = null;
-            this.logStyle = {
-                tag: 'Danmaku Statistic',
-                style: 'background: #00a2d8; color: white; padding: 2px 6px; border-radius: 3px;',
-                errorStyle: 'background: #ff4d4f; color: white; padding: 2px 6px; border-radius: 3px;'
-            };
-        }
-        logTag(...args) {
-            console.log(`%c${this.logStyle.tag}`, this.logStyle.style, ...args);
-        }
-        logTagError(...args) {
-            console.error(`%c${this.logStyle.tag}`, this.logStyle.errorStyle, ...args);
-        }
-        parseDanmakuXml(xmlText) {
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(xmlText, 'application/xml');
-            const dElements = xmlDoc.getElementsByTagName('d');
-            const danmakus = [];
-            for (const d of dElements) {
-                const pAttr = d.getAttribute('p');
-                if (!pAttr) continue;
-                const parts = pAttr.split(',');
-                if (parts.length < 8) continue;
-                danmakus.push({
-                    progress: parseFloat(parts[0]) * 1000,
-                    mode: parseInt(parts[1]),
-                    fontsize: parseInt(parts[2]),
-                    color: parseInt(parts[3]),
-                    ctime: parseInt(parts[4]),
-                    pool: parseInt(parts[5]),
-                    midHash: parts[6],
-                    dmid: parts[7],
-                    weight: parseInt(parts[8]),
-                    content: d.textContent.trim()
-                });
-            }
-            this.logTag(`解析弹幕xml文本完成，共 ${danmakus.length} 条弹幕`);
-            return danmakus;
-        }
-        parseBiliUrl(url) {
-            this.bvid = null;
-            this.p = null;
-            this.epid = null;
-            const bvidMatch = url.match(/BV[a-zA-Z0-9]+/);
-            if (bvidMatch) this.bvid = bvidMatch[0];
-            if (this.bvid) {
-                const pMatch = url.match(/[?&]p=(\d+)/);
-                if (pMatch) {
-                    const parsedP = parseInt(pMatch[1], 10);
-                    if (!isNaN(parsedP) && parsedP >= 1) {
-                        this.p = parsedP;
-                    }
-                }
-                if (this.p) {
-                    this.logTag(`解析 URL 得到 BVID=${this.bvid}, 分页p=${this.p}`);
-                } else {
-                    this.logTag(`解析 URL 得到 BVID=${this.bvid}`);
-                }
-            } else {
-                const epidMatch = url.match(/ep(\d+)/);
-                if (epidMatch) {
-                    this.epid = parseInt(epidMatch[1]);
-                } else {
-                    this.logTagError(`URL=${url} 解析未找到 ID 信息`);
-                }
-            }
-        }
-        _findCid() {
-            if (this.bvid) {
-                this.cid = this.videoData.pages[this.p - 1]?.cid || this.videoData.cid;
-                return this.cid
-            }
-            if (this.epid) {
-                if (Array.isArray(this.episodeData.episodes)) {
-                    const ep = this.episodeData.episodes.find(e => e.ep_id === this.epid || e.id === this.epid);
-                    if (ep) {
-                        this.cid = ep.cid;
-                        return this.cid
-                    }
-                }
-                if (Array.isArray(this.episodeData.section)) {
-                    for (const section of this.episodeData.section) {
-                        const ep = section.episodes?.find(e => e.ep_id === this.epid || e.id === this.epid);
-                        if (ep) {
-                            this.cid = ep.cid;
-                            return this.cid
-                        }
-                    }
-                }
-            }
-        }
-        async getVideoData() {
-            if (!this.bvid) return null;
-            try {
-                const res = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${this.bvid}`);
-                const json = await res.json();
-                if (json && json.data) {
-                    this.videoData = json.data;
-                    this.logTag('获取视频信息成功');
-                    this.fetchtime = Math.floor(Date.now() / 1000);
-                    return this.videoData;
-                }
-                else throw new Error(`视频信息接口请求失败，json：${json}`);
-            } catch (e) {
-                this.logTagError('请求视频信息失败:', e);
-                return null;
-            }
-        }
-        async getEpisodeData() {
-            if (!this.epid) return null;
-            try {
-                const res = await fetch(`https://api.bilibili.com/pgc/view/web/season?ep_id=${this.epid}`);
-                const json = await res.json();
-                if (json && json.result) {
-                    this.episodeData = json.result;
-                    this.logTag('获取剧集信息成功');
-                    this.fetchtime = Math.floor(Date.now() / 1000);
-                    return this.episodeData;
-                }
-                else throw new Error(`剧集信息接口请求失败，json：${json}`);
-            } catch (e) {
-                this.logTagError('请求剧集信息失败:', e);
-                return null;
-            }
-        }
-        async getDanmakuData() {
-            try {
-                this._findCid();
-                if (!this.cid) throw new Error('ChatID 缺失');
-
-                const res = await fetch(`https://api.bilibili.com/x/v1/dm/list.so?oid=${this.cid}`);
-                if (!res.ok) throw new Error(`弹幕接口请求失败，状态码：${res.status}`);
-
-                this.danmakuXmlText = await res.text();
-                this.danmakuData = this.parseDanmakuXml(this.danmakuXmlText);
-                this.logTag('获取弹幕数据成功');
-                this.fetchtime = Math.floor(Date.now() / 1000);
-                return this.danmakuData;
-            } catch (err) {
-                this.logTagError('获取弹幕数据失败:', err);
-                return null;
-            }
-        }
-        async fetchAllData(url) {
-            this.parseBiliUrl(url);
-            await this.getVideoData();
-            await this.getEpisodeData();
-            await this.getDanmakuData();
-            return {
-                videoData: this.videoData,
-                danmakuData: this.danmakuData
-            };
-        }
-        async getUserCardData(mid) {
-            try {
-                const res = await fetch(`https://api.bilibili.com/x/web-interface/card?mid=${mid}&photo=true`);
-                const json = await res.json();
-                if (json.code === 0) {
-                    this.logTag(`获取用户名片成功：${mid}`);
-                    return json.data;
-                } else {
-                    throw new Error(json.message || '获取用户信息失败');
-                }
-            } catch (e) {
-                this.logTagError('请求用户信息失败:', e);
-                return { card: { mid } };
-            }
-        }
-    }
-    const dmUtils = new BiliDanmakuUtils();
-
     // 插入按钮
-    function insertButton() {
+    function insertButton(isUserPage) {
         const btn = document.createElement('div');
         btn.id = 'danmaku-stat-btn';
         btn.innerHTML = `
-        <span style="margin-left: 20px; white-space: nowrap; color: #00ace5; user-select: none;">弹幕统计</span>
+        <span style="margin-left: 20px; white-space: nowrap; color: #00ace5; user-select: none;">${isUserPage ? '用户信息' : '弹幕统计'}</span>
         <div style="display: flex; align-items: center; justify-content: center; margin-right: 8px; flex-shrink: 0;">
           <svg t="1745985333201" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1486" 
           width="24" height="24">
@@ -2078,11 +1719,29 @@ onmessage = function (e) {
             btn.style.backgroundColor = 'transparent';
             btn.style.border = 'none';
         };
-        btn.onclick = openPanel;
+        btn.onclick = () => {
+            openPanel(async (iframe) => {
+                if (isUserPage) {
+                    const mid = location.href.match(/\/(\d+)/)?.[1];
+                    const userData = await dmUtils.getUserCardData(mid);
+                    return initUserIframeApp(iframe, userData);
+                } else {
+                    await dmUtils.fetchAllData(location.href);
+                    return initIframeApp(iframe, dmUtils, {
+                        type: 0, newPanel: function (type) {
+                            if (type == 0) {
+                                openPanelInNewTab();
+                                dmUtils.logTag('[主页面] 新建子页面');
+                            }
+                        }
+                    });
+                }
+            });
+        };
         document.body.appendChild(btn);
     }
     // 打开iframe弹幕统计面板
-    function openPanel() {
+    function openPanel(initFn) {
         if (document.getElementById('danmaku-stat-iframe')) {
             console.warn('统计面板已打开');
             return;
@@ -2090,12 +1749,15 @@ onmessage = function (e) {
         // 创建蒙层
         const overlay = document.createElement('div');
         overlay.id = 'danmaku-stat-overlay';
-        overlay.style.cssText = `
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
-            z-index: 9998;
-        `;
+        Object.assign(overlay.style, {
+            position: 'fixed',
+            top: '0',
+            left: '0',
+            width: '100%',
+            height: '100%',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            zIndex: '9998'
+        });
         overlay.onclick = () => {
             document.getElementById('danmaku-stat-iframe')?.remove();
             overlay.remove();
@@ -2105,45 +1767,35 @@ onmessage = function (e) {
         // 创建iframe
         const iframe = document.createElement('iframe');
         iframe.id = 'danmaku-stat-iframe';
-        iframe.style.cssText = `
-            position: fixed;
-            top: 15%; left: 15%; width: 70%; height: 70%;
-            background-color: #fff;
-            z-index: 9999;
-            padding: 20px;
-            overflow: hidden;
-            border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
-        `;
-
-        const match = location.href.match(/^https:\/\/space\.bilibili\.com\/(\d+)/);
-        const isUserPage = !!match;
+        Object.assign(iframe.style, {
+            position: 'fixed',
+            top: '15%',
+            left: '15%',
+            width: '70%',
+            height: '70%',
+            backgroundColor: '#fff',
+            zIndex: '9999',
+            padding: '20px',
+            overflow: 'hidden',
+            borderRadius: '8px',
+            boxShadow: '0 0 10px rgba(0, 0, 0, 0.5)'
+        });
         iframe.onload = async () => {
             try {
-                if (isUserPage) {
-                    const mid = match[1];
-                    const userData = await dmUtils.getUserCardData(mid);
-                    await initUserIframeApp(iframe, userData);
+                if (typeof initFn === 'function') {
+                    await initFn(iframe);
                 } else {
-                    await dmUtils.fetchAllData(location.href);
-                    await initIframeApp(iframe, dmUtils, {
-                        type: 0, newPanel: function (type) {
-                            if (type == 0) {
-                                openPanelInNewTab();
-                                dmUtils.logTag('[主页面] 新建子页面');
-                            }
-                        }
-                    });
+                    console.warn('initFn 未传入或不是函数');
                 }
             } catch (err) {
-                dmUtils.logTagError('初始化失败:', err);
-                alert(`面板加载失败：${err.message}`);
+                console.error('初始化统计面板失败：', err);
+                alert('初始化失败：' + err.message);
             }
         };
         document.body.appendChild(iframe);
     }
-    // 打开新标签页弹幕统计面板
-    function openPanelInNewTab() {
+
+    function generatePanelBlob(panelInfoText) {
         let bTitle = 'Bilibili';
         if (dmUtils.bvid) bTitle = dmUtils.bvid;
         else if (dmUtils.epid) bTitle = 'ep' + dmUtils.epid;
@@ -2163,83 +1815,7 @@ onmessage = function (e) {
         </head>
         <body>
         <script>
-            ${initIframeApp.toString()}
-            ${BiliDanmakuUtils.toString()}
-            ${BiliMidHashConverter.toString()}
-            const dmUtils = new BiliDanmakuUtils();
-            window.addEventListener('message', function(event) {
-                Object.assign(dmUtils, event.data);
-                if (!dmUtils.danmakuData) {
-                    dmUtils.logTagError('数据获取失败');
-                } else {
-                    dmUtils.logTag('[子页面] 收到数据');
-                }
-                const iframe = document.createElement('iframe');
-                iframe.id = 'danmaku-stat-iframe';
-                iframe.style.position = 'fixed';
-                iframe.style.top = '3%';
-                iframe.style.left = '4%';
-                iframe.style.height = '90%';
-                iframe.style.width = '90%';
-                iframe.style.border = '0';
-                iframe.style.backgroundColor = '#fff';
-                iframe.style.padding = '20px';
-                iframe.style.overflow = 'hidden';
-                iframe.style.borderRadius = '8px';
-                iframe.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
-                iframe.onload = () => initIframeApp(iframe, dmUtils, {
-                    type: 1,
-                    newPanel: function (type) {
-                        if (type == 1) {
-                            if (window.opener) {
-                                dmUtils.logTag('[子页面] 请求保存页面');
-                                window.opener.postMessage({ type: 'DMSTATS_REQUEST_SAFE' }, '*');
-                            }
-                        }
-                    }
-                });
-                document.body.appendChild(iframe);
-            });
-            // 主动请求数据
-            window.addEventListener('load', () => {
-                if (window.opener) {
-                    dmUtils.logTag('[子页面] 请求数据');
-                    window.opener.postMessage({ type: 'DMSTATS_REQUEST_DATA' }, '*');
-                }
-            });
-        </script>
-        </body>
-        </html>
-        `;
-        const blob = new Blob([htmlContent], { type: 'text/html' });
-        const blobUrl = URL.createObjectURL(blob);
-        const newWin = window.open(blobUrl, '_blank');
-        if (!newWin) {
-            alert('浏览器阻止了弹出窗口');
-            return;
-        }
-    }
-    // 保存弹幕统计面板
-    function savePanel() {
-        let bTitle = 'Bilibili';
-        if (dmUtils.bvid) bTitle = dmUtils.bvid;
-        else if (dmUtils.epid) bTitle = 'ep' + dmUtils.epid;
-        const htmlContent = `
-        <!DOCTYPE html>
-        <html lang="zh">
-        <head>
-        <meta charset="UTF-8">
-        <title>${bTitle} 弹幕统计</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            html, body {
-                margin: 0;
-                padding: 0;
-            }
-        </style>
-        </head>
-        <body>
-        <script>
+            ${ResourceLoader.toString()}
             ${initIframeApp.toString()}
             ${BiliDanmakuUtils.toString()}
             ${BiliMidHashConverter.toString()}
@@ -2258,19 +1834,45 @@ onmessage = function (e) {
             iframe.style.overflow = 'hidden';
             iframe.style.borderRadius = '8px';
             iframe.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
-            iframe.onload = () => initIframeApp(iframe, dmUtils, {
-                type: 2,
-                newPanel: function (type) {
-                    dmUtils.logTag('未定义操作');
-                }
-            });
+            iframe.onload = () => initIframeApp(iframe, dmUtils, ${panelInfoText});
             document.body.appendChild(iframe);
         </script>
         </body>
         </html>
         `;
         const blob = new Blob([htmlContent], { type: 'text/html' });
-        const blobUrl = URL.createObjectURL(blob);
+        return URL.createObjectURL(blob);
+    }
+    // 打开新标签页弹幕统计面板
+    function openPanelInNewTab() {
+        const blobUrl = generatePanelBlob(`{
+            type: 1,
+            newPanel: function (type) {
+                if (type == 1) {
+                    if (window.opener) {
+                        dmUtils.logTag('[子页面] 请求保存页面');
+                        window.opener.postMessage({ type: 'DMSTATS_REQUEST_SAFE' }, '*');
+                    }
+                }
+            }
+        }`);
+        const newWin = window.open(blobUrl, '_blank');
+        if (!newWin) {
+            alert('浏览器阻止了弹出窗口');
+            return;
+        }
+    }
+    // 保存弹幕统计面板
+    function savePanel() {
+        let bTitle = 'Bilibili';
+        if (dmUtils.bvid) bTitle = dmUtils.bvid;
+        else if (dmUtils.epid) bTitle = 'ep' + dmUtils.epid;
+        const blobUrl = generatePanelBlob(`{
+            type: 2,
+            newPanel: function (type) {
+                dmUtils.logTag('未定义操作');
+            }
+        }`);
         const link = document.createElement('a');
         link.href = blobUrl;
         link.download = `${bTitle}_danmaku_statistics.html`;
@@ -2279,6 +1881,15 @@ onmessage = function (e) {
         document.body.removeChild(link);
         URL.revokeObjectURL(blobUrl);
     }
+
+
+    const urlOfUtils = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/BiliDanmakuUtils.js';
+    const urlOfConverter = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/BiliMidHashConverter.js';
+    const { BiliDanmakuUtils } = await import(urlOfUtils);
+    const { BiliMidHashConverter } = await import(urlOfConverter);
+    const dmUtils = new BiliDanmakuUtils();
+    dmUtils.logStyle.tag = 'Danmaku Statistic';
+
     // 监听新标签页消息
     window.addEventListener('message', (event) => {
         if (event.data?.type === 'DMSTATS_REQUEST_DATA') {
@@ -2289,5 +1900,10 @@ onmessage = function (e) {
             savePanel();
         }
     });
-    insertButton();
+
+    if (location.hostname.includes('space.bilibili.com')) {
+        insertButton(true);
+    } else if (location.hostname.includes('www.bilibili.com')) {
+        insertButton(false);
+    }
 })();
