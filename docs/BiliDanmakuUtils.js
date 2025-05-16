@@ -10,7 +10,7 @@ export class BiliDanmakuUtils {
         this.danmakuXmlText = null;
         this.fetchtime = null;
         this.logStyle = {
-            tag: 'Danmaku Statistic',
+            tag: 'Danmaku Utils',
             style: 'background: #00a2d8; color: white; padding: 2px 6px; border-radius: 3px;',
             errorStyle: 'background: #ff4d4f; color: white; padding: 2px 6px; border-radius: 3px;'
         };
