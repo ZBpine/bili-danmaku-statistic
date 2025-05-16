@@ -72,3 +72,7 @@
 
 **版本1.8**
 - 增加虚拟化弹幕表格，加载更快
+
+**版本1.9**
+- 增加筛选排除功能
+- 增加下载弹幕json功能，可配合 [YouTube 本地B站弹幕播放器](https://greasyfork.org/zh-CN/scripts/536159-youtube-%E6%9C%AC%E5%9C%B0b%E7%AB%99%E5%BC%B9%E5%B9%95%E6%92%AD%E6%94%BE%E5%99%A8) 使用
