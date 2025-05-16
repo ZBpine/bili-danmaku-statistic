@@ -33,6 +33,7 @@ export class BiliDanmakuPlayer {
     }
     init() {
         const player = document.querySelector('.html5-video-player');
+        if (!player) return false;
         player.style.position = 'relative'; // 确保 relative 定位
         player.appendChild(this.container);
 
@@ -42,6 +43,7 @@ export class BiliDanmakuPlayer {
 
         this.observe();
         this.injectAnimationStyle();
+        return true;
     }
     injectAnimationStyle() {
         if (document.getElementById('danmaku-style')) return; // 防止重复添加
