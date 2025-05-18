@@ -1,0 +1,27 @@
+[
+    {
+        "name": "date",
+        "title": "发送日期分布",
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-date.json"
+    },
+    {
+        "name": "hour",
+        "title": "发送时间分布",
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-hour.json"
+    },
+    {
+        "name": "pool",
+        "title": "弹幕池分布",
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-pool.json"
+    },
+    {
+        "name": "weight",
+        "title": "弹幕屏蔽等级分布",
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-weight.json"
+    },
+    {
+        "name": "mode",
+        "title": "弹幕类型分布",
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-mode.json"
+    }
+]
