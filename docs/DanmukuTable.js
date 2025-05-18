@@ -113,7 +113,7 @@ export default function createDanmukuTable(Vue, ElementPlus) {
                                 }, [
                                     createCell(formatProgress(item.progress), { width: '80px' }),
                                     h(ElementPlus.ElTooltip, {
-                                        content: `发送用户: ${item.midHash}\n等级: ${item.weight}`,
+                                        content: `发送用户: ${item.midHash}\n 屏蔽等级: ${item.weight}`,
                                         placement: 'top-start'
                                     }, {
                                         default: () => createCell(item.content, {
