@@ -2,31 +2,31 @@
     {
         "name": "date",
         "title": "发送日期分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-date.json"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-date.js"
     },
     {
         "name": "hour",
         "title": "发送时间分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-hour.json"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-hour.js"
     },
     {
         "name": "pool",
         "title": "弹幕池分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-pool.json"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-pool.js"
     },
     {
         "name": "weight",
         "title": "弹幕屏蔽等级分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-weight.json"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-weight.js"
     },
     {
         "name": "mode",
         "title": "弹幕类型分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-mode.json"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-mode.js"
     },
     {
         "name": "leadingDigit",
         "title": "弹幕中数字首位分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-leadingDigit.json"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-leadingDigit.js"
     }
 ]
