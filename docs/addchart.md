@@ -5,9 +5,11 @@
 例如你看到[毕导视频讲本福特定律](https://www.bilibili.com/video/BV1VrVSz1Eme)，于是想统计一下弹幕验证一下：
 ![示例](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example03.png)
 
-这就需要添加自定义图表，方法是F12打开控制台输入代码。统计首位数字的代码我已经~~找ChatGPT~~写好了，[以下：](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/chart-leadingDigit.js)
+这就需要添加自定义图表：右上角设置->添加图表->输入代码->添加。统计首位数字的代码我已经~~找ChatGPT~~写好了，[以下：](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-leadingDigit.js)
 ```js
-addCustomChart('leadingDigit', {
+{
+    name: 'leadingDigit',
+    title: '弹幕中数字首位分布',
     expandedH: false,
     render(data) {
         const digitCount = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0, '8': 0, '9': 0 };
@@ -30,7 +32,7 @@ addCustomChart('leadingDigit', {
         const percentages = counts.map(c => ((c / total) * 100).toFixed(2));
 
         this.instance.setOption({
-            title: { text: '弹幕中数字首位分布（非0）' },
+            title: { text: '弹幕中数字首位分布' },
             tooltip: {
                 trigger: 'axis',
                 formatter: function (params) {
@@ -73,13 +75,15 @@ addCustomChart('leadingDigit', {
             ])
         });
     }
-});
+}
 ```
-将代码复制到控制台回车运行就添加好了。
+
 
 # 写法
 ```js
-addCustomChart('图表唯一名称', {
+{
+    name: 'customChart', // 唯一键名
+    title: '示例图表', // 标题
     expandedH: true 或 false, // 是否支持高度展开（可选）
     render(data) {
         // 图表绘制逻辑
@@ -94,7 +98,7 @@ addCustomChart('图表唯一名称', {
         // applySubFilter(subFilt) 可用于筛选弹幕
         // ELEMENT_PLUS 可用于生成 ElTag、ElLink 等 Element Plus 组件
     }
-});
+}
 ```
 
 其中`applySubFilter`
