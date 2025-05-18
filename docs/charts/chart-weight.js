@@ -1,6 +1,7 @@
 ({
     name: 'weight',
     title: '弹幕屏蔽等级分布',
+    refresh: true,
     render(data) {
         const levelCount = {};
         data.forEach(d => {
@@ -20,13 +21,13 @@
             series: [{ type: 'bar', data: yData }]
         });
     },
-    async onClick({ params, applySubFilter, ELEMENT_PLUS, h }) {
-        const level = Number(params.name); // 直接就是等级数
+    async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
+        const level = Number(params.name);
         await applySubFilter({
             value: level,
             filterFn: data => (data || []).filter(d => (d.weight ?? 0) === level),
             labelVNode: h => h('span', [
-                '等级：',
+                '屏蔽等级：',
                 h(ELEMENT_PLUS.ElTag, { type: 'info', size: 'small', style: 'vertical-align: baseline' }, String(level))
             ])
         });

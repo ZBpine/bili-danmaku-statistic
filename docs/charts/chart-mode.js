@@ -35,14 +35,14 @@
             series: [{ type: 'bar', data: yData }]
         });
     },
-    async onClick({ params, applySubFilter, ELEMENT_PLUS, h }) {
+    async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
         const typeLabel = params.name;
         const typeVal = this._typeIndexMap?.[typeLabel];
         if (typeof typeVal !== 'number') return;
 
         await applySubFilter({
             value: typeVal,
-            filterFn: data => data.filter(d => d.type === typeVal),
+            filterFn: data => data.filter(d => d.mode === typeVal),
             labelVNode: h => h('span', [
                 '类型：',
                 h(ELEMENT_PLUS.ElTag, { type: 'info', size: 'small', style: 'vertical-align: baseline' }, typeLabel)
