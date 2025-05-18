@@ -23,10 +23,5 @@
         "name": "mode",
         "title": "弹幕类型分布",
         "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-mode.js"
-    },
-    {
-        "name": "leadingDigit",
-        "title": "弹幕中数字首位分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-leadingDigit.js"
     }
 ]
