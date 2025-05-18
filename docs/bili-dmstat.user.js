@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.9.0
+// @version      1.10.0
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -42,6 +42,7 @@
         loader.addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css');
         await loader.addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js');
         await loader.addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
+        await loader.addScript('https://cdn.jsdelivr.net/npm/@element-plus/icons-vue/dist/index.iife.min.js');
         await loader.addScript('https://cdn.jsdelivr.net/npm/echarts@5');
         await loader.addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js');
         await loader.addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
@@ -58,11 +59,15 @@
         doc.body.appendChild(appRoot);
 
         // 挂载Vue
-        const { createApp, ref, reactive, onMounted, nextTick, h, computed } = win.Vue;
+        const { createApp, ref, reactive, onMounted, nextTick, h, computed, watch } = win.Vue;
         const ELEMENT_PLUS = win.ElementPlus;
         const ECHARTS = win.echarts;
+        const ICONS = win.ElementPlusIconsVue;
         const app = createApp({
             setup() {
+                ['Setting', 'Plus', 'Delete', 'Download', 'User', 'PictureFilled'].forEach(key => {
+                    app.component('ElIcon' + key, ICONS[key]);
+                });
                 app.component('DanmukuTable', DanmukuTable);
                 app.component('ImagePopoverLink', {
                     props: {
@@ -143,8 +148,35 @@
                     filtered: [],   //正则筛选后
                     current: []     //子筛选提交后
                 };
+                const DmstatStorage = {
+                    key: 'dmstat',
+                    getConfig() {
+                        return JSON.parse(localStorage.getItem(this.key) || '{}');
+                    },
+                    setConfig(obj) {
+                        localStorage.setItem(this.key, JSON.stringify(obj));
+                    },
+                    get(key, fallback = undefined) {
+                        const config = this.getConfig();
+                        return config[key] ?? fallback;
+                    },
+                    set(key, value) {
+                        const config = this.getConfig();
+                        config[key] = value;
+                        this.setConfig(config);
+                    },
+                    remove(key) {
+                        const config = this.getConfig();
+                        delete config[key];
+                        this.setConfig(config);
+                    },
+                    clear() {
+                        localStorage.removeItem(this.key);
+                    }
+                };
                 const charts = {
                     user: {
+                        title: '用户弹幕统计',
                         instance: null,
                         expandedH: false,
                         actions: [
@@ -284,6 +316,7 @@
                         }
                     },
                     wordcloud: {
+                        title: '弹幕词云',
                         instance: null,
                         expandedH: false,
                         segmentWorker: null,
@@ -430,6 +463,7 @@ onmessage = function (e) {
                         }
                     },
                     density: {
+                        title: '弹幕密度分布',
                         instance: null,
                         refresh: true,
                         rangeMode: false,
@@ -606,157 +640,17 @@ onmessage = function (e) {
                                 }]
                             });
                         }
-                    },
-                    date: {
-                        instance: null,
-                        refresh: true,
-                        render(data) {
-                            const countMap = {};
-                            data.forEach(d => {
-                                const date = formatTime(d.ctime).split(' ')[0];
-                                countMap[date] = (countMap[date] || 0) + 1;
-                            });
-                            // 按日期升序排序
-                            const sorted = Object.entries(countMap).sort((a, b) => new Date(a[0]) - new Date(b[0]));
-                            const x = sorted.map(([date]) => date);
-                            const y = sorted.map(([, count]) => count);
-
-                            const totalDays = x.length;
-                            const startIdx = Math.max(0, totalDays - 30); // 只显示最近30天
-                            this.instance.setOption({
-                                title: { text: '发送日期分布' },
-                                tooltip: {},
-                                xAxis: { type: 'category', data: x },
-                                yAxis: { type: 'value', name: '弹幕数量' },
-                                dataZoom: [
-                                    {
-                                        type: 'slider',
-                                        startValue: startIdx,
-                                        endValue: totalDays - 1,
-                                        xAxisIndex: 0,
-                                        height: 20
-                                    }
-                                ],
-                                series: [{ type: 'bar', data: y }]
-                            });
-                        },
-                        async onClick({ params, applySubFilter }) {
-                            const selectedDate = params.name;
-                            await applySubFilter({
-                                value: selectedDate,
-                                filterFn: (data) => data.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
-                                labelVNode: (h) => h('span', [
-                                    '日期',
-                                    h(ELEMENT_PLUS.ElTag, {
-                                        type: 'info',
-                                        size: 'small',
-                                        style: 'vertical-align: baseline;'
-                                    }, selectedDate)
-                                ])
-                            });
-                        }
-                    },
-                    hour: {
-                        instance: null,
-                        refresh: true,
-                        render(data) {
-                            const hours = new Array(24).fill(0);
-                            data.forEach(d => {
-                                const hour = new Date(d.ctime * 1000).getHours();
-                                hours[hour]++;
-                            });
-                            this.instance.setOption({
-                                title: { text: '发送时间分布' },
-                                tooltip: {},
-                                xAxis: { type: 'category', data: hours.map((_, i) => i + '时') },
-                                yAxis: { type: 'value', name: '弹幕数量' },
-                                series: [{ type: 'bar', data: hours }]
-                            });
-                        },
-                        async onClick({ params, applySubFilter }) {
-                            const selectedHour = parseInt(params.name);
-                            await applySubFilter({
-                                value: selectedHour,
-                                filterFn: (data) => data.filter(d => new Date(d.ctime * 1000).getHours() === selectedHour),
-                                labelVNode: (h) => h('span', [
-                                    '每天',
-                                    h(ELEMENT_PLUS.ElTag, {
-                                        type: 'info',
-                                        size: 'small',
-                                        style: 'vertical-align: baseline;'
-                                    }, selectedHour),
-                                    '点'
-                                ])
-                            });
-                        }
-                    },
-                    pool: {
-                        instance: null,
-                        expandedH: false,
-                        render(data) {
-                            const labelMap = {
-                                0: '普通池',
-                                1: '字幕池',
-                                2: '特殊池',
-                                3: '互动池'
-                            };
-
-                            // 动态统计出现过的 pool 值
-                            const poolMap = {};
-                            data.forEach(d => {
-                                const key = d.pool;
-                                poolMap[key] = (poolMap[key] || 0) + 1;
-                            });
-
-                            const keys = Object.keys(poolMap);
-                            const xData = keys.map(k => labelMap[k] ?? `pool:${k}`);
-                            const yData = keys.map(k => poolMap[k]);
-                            this._poolIndexMap = Object.fromEntries(xData.map((label, i) => [label, Number(keys[i])]));
-
-                            this.instance.setOption({
-                                title: { text: '弹幕池分布' },
-                                tooltip: {},
-                                xAxis: {
-                                    type: 'category',
-                                    data: xData
-                                },
-                                yAxis: {
-                                    type: 'value',
-                                    name: '弹幕数量'
-                                },
-                                series: [{
-                                    type: 'bar',
-                                    data: yData
-                                }]
-                            });
-                        },
-                        async onClick({ params, applySubFilter }) {
-                            const poolLabel = params.name;
-                            const poolVal = this._poolIndexMap?.[poolLabel];
-                            await applySubFilter({
-                                value: poolLabel,
-                                filterFn: (data) => data.filter(d => d.pool === poolVal),
-                                labelVNode: (h) => h('span', [
-                                    h(ELEMENT_PLUS.ElTag, {
-                                        type: 'info',
-                                        size: 'small',
-                                        style: 'vertical-align: baseline;'
-                                    }, poolLabel)
-                                ])
-                            });
-                        }
                     }
                 };
-                const chartsVisible = ref(Object.keys(charts));
                 const chartsActions = reactive({
                     remove: {
                         icon: '⨉',
                         title: '移除图表',
                         apply: () => true,
                         handler: (chart) => {
-                            const idx = chartsVisible.value.indexOf(chart);
+                            const idx = chartConfig.chartsVisible.indexOf(chart);
                             if (idx !== -1) {
-                                chartsVisible.value.splice(idx, 1);
+                                chartConfig.chartsVisible.splice(idx, 1);
                                 disposeChart(chart);
                             }
                         }
@@ -766,10 +660,10 @@ onmessage = function (e) {
                         title: '下移图表',
                         apply: () => true,
                         handler: async (chart) => {
-                            const idx = chartsVisible.value.indexOf(chart);
-                            if (idx < chartsVisible.value.length - 1) {
-                                chartsVisible.value.splice(idx, 1);
-                                chartsVisible.value.splice(idx + 1, 0, chart);
+                            const idx = chartConfig.chartsVisible.indexOf(chart);
+                            if (idx < chartConfig.chartsVisible.length - 1) {
+                                chartConfig.chartsVisible.splice(idx, 1);
+                                chartConfig.chartsVisible.splice(idx + 1, 0, chart);
                                 await nextTick();
                                 const el = doc.getElementById('chart-' + chart);
                                 if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -781,10 +675,10 @@ onmessage = function (e) {
                         title: '上移图表',
                         apply: () => true,
                         handler: async (chart) => {
-                            const idx = chartsVisible.value.indexOf(chart);
+                            const idx = chartConfig.chartsVisible.indexOf(chart);
                             if (idx > 0) {
-                                chartsVisible.value.splice(idx, 1);
-                                chartsVisible.value.splice(idx - 1, 0, chart);
+                                chartConfig.chartsVisible.splice(idx, 1);
+                                chartConfig.chartsVisible.splice(idx - 1, 0, chart);
                                 await nextTick();
                                 const el = doc.getElementById('chart-' + chart);
                                 if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -818,6 +712,225 @@ onmessage = function (e) {
                     }
                 });
                 const chartHover = ref(null);
+                const chartConfig = reactive({
+                    show: false,                         // 是否显示设置弹窗
+                    chartsAvailable: [],                 // 所有图表（默认+自定义）
+                    chartsVisible: [],                   // 当前勾选可见图表
+                    oldChartsVisible: [],
+                    customInputVisible: false,           // 是否展开自定义添加区域
+                    newChartCode: `{
+    name: 'leadingDigit',
+    title: '例子-弹幕中数字首位分布',
+    expandedH: false,
+    render(data) {
+        const digitCount = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0, '8': 0, '9': 0 };
+        const digitRegex = /\\d+/g;
+
+        data.forEach(d => {
+            const matches = d.content.match(digitRegex);
+            if (!matches) return;
+            matches.forEach(numStr => {
+                const firstDigit = numStr.replace(/^0+/, '')[0];
+                if (firstDigit && digitCount[firstDigit] !== undefined) {
+                    digitCount[firstDigit]++;
+                }
+            });
+        });
+
+        const labels = Object.keys(digitCount);
+        const counts = labels.map(d => digitCount[d]);
+        const total = counts.reduce((a, b) => a + b, 0);
+        const percentages = counts.map(c => ((c / total) * 100).toFixed(2));
+
+        this.instance.setOption({
+            title: { text: '弹幕中数字首位分布' },
+            tooltip: {
+                trigger: 'axis',
+                formatter: function (params) {
+                    const p = params[0];
+                    return "首位数字：" + p.name + "<br/>数量：" + p.value + "<br/>占比：" + percentages[labels.indexOf(p.name)] + "%";
+                }
+            },
+            xAxis: {
+                type: 'category',
+                data: labels,
+                name: '首位数字'
+            },
+            yAxis: {
+                type: 'value',
+                name: '出现次数'
+            },
+            series: [{
+                type: 'bar',
+                data: counts,
+                label: {
+                    show: true,
+                    position: 'top',
+                    formatter: (val) => percentages[val.dataIndex] + "%"
+                }
+            }]
+        });
+    },
+    async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
+        const selectedDigit = params.name;
+        await applySubFilter({
+            value: selectedDigit,
+            filterFn: (data) => data.filter(d => (d.content.match(/\\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit)),
+            labelVNode: (h) => h('span', [
+                '首位数字为 ',
+                h(ELEMENT_PLUS.ElTag, {
+                    type: 'info',
+                    size: 'small',
+                    style: 'vertical-align: baseline;'
+                }, selectedDigit)
+            ])
+        });
+    }
+}`
+                    ,                                    // 自定义图表代码
+                    remoteChartList: [],                 // 远程图表加载数据列表
+                    open() {
+                        this.show = true;
+                        this.oldChartsVisible = [...this.chartsVisible];
+                        this.sortChartsAvailable();
+                    },
+                    sortChartsAvailable() {
+                        const visible = this.chartsVisible;
+                        const visibleSet = new Set(this.chartsVisible);
+                        const fullList = Object.entries(charts).map(([key, def]) => ({
+                            key,
+                            title: def?.title || key,
+                            isCustom: key.startsWith('custom_')
+                        }));
+                        this.chartsAvailable = [
+                            ...visible.map(k => fullList.find(c => c.key === k)).filter(Boolean),
+                            ...fullList.filter(c => !visibleSet.has(c.key))
+                        ];
+                    },
+                    async cheackChartChange() {
+                        this.sortChartsAvailable();
+                        const newVisible = [...this.chartsVisible];
+                        const oldVisible = this.oldChartsVisible;
+                        const removed = oldVisible.filter(k => !newVisible.includes(k));
+                        for (const chart of removed) disposeChart(chart);
+                        const added = newVisible.filter(k => !oldVisible.includes(k));
+                        for (const chart of added) await renderChart(chart);
+                        this.oldChartsVisible = newVisible;
+                    },
+                    removeCustomChart(name) {
+                        const cfg = DmstatStorage.getConfig();
+                        delete cfg.customCharts?.[name];
+                        DmstatStorage.setConfig(cfg);
+                        const idx = this.chartsVisible.indexOf(name);
+                        if (idx >= 0) this.chartsVisible.splice(idx, 1);
+                        disposeChart(name);
+                        delete charts[name];
+                        this.open(); // 重新加载配置
+                        ELEMENT_PLUS.ElMessage.success(`已删除图表 ${name}`);
+                    },
+                    addStorageChart(chartName, chartCode) {
+                        const custom = DmstatStorage.get('customCharts', {});
+                        custom[chartName] = chartCode;
+                        DmstatStorage.set('customCharts', custom);
+                    },
+                    isCostomAdded(name) {
+                        const key = 'custom_' + name;
+                        return chartConfig.chartsAvailable.some(c => c.key === key);
+                    },
+                    addChartCode(code) {
+                        const chartDef = eval('(' + code + ')');
+                        const chartName = 'custom_' + (chartDef.name.replace(/\s+/g, '_') || Date.now());
+                        if (charts[chartName]) return ELEMENT_PLUS.ElMessage.warning('图表已存在');
+                        chartDef.title = chartDef.title || `🧩 ${chartName}`;
+
+                        this.addChartDef(chartName, chartDef);
+                        this.addStorageChart(chartName, code);
+                        this.open();
+                        ELEMENT_PLUS.ElMessage.success(`已添加图表 ${chartDef.title}`);
+                    },
+                    addChartDef(chartName, chartDef, visible = true) {
+                        if (!chartName || typeof chartDef !== 'object') {
+                            console.warn('chartName 必须为字符串，chartDef 必须为对象');
+                            return;
+                        }
+                        chartDef.ctx = {
+                            ELEMENT_PLUS,
+                            ECHARTS,
+                            chartsActions,
+                            displayedDanmakus,
+                            danmakuCount,
+                            danmakuList,
+                            videoData,
+                            registerChartAction,
+                            formatProgress,
+                            formatTime
+                        }
+                        registerChartAction(chartName, chartDef);
+                        charts[chartName] = { instance: null, ...chartDef };
+                        if (visible && !chartConfig.chartsVisible.includes(chartName)) {
+                            chartConfig.chartsVisible.push(chartName);
+                        }
+                        nextTick(() => { renderChart(chartName); });
+                    },
+                    addCustomChart() {
+                        try {
+                            this.addChartCode(this.newChartCode)
+                            this.customInputVisible = false;
+                        } catch (e) {
+                            console.error(e);
+                            ELEMENT_PLUS.ElMessage.error('图表代码错误');
+                        }
+                    },
+                    async loadRemoteList() {
+                        try {
+                            const url = `https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/chart-list.json?t=${Date.now()}`;
+                            const res = await fetch(url);
+                            this.remoteChartList = await res.json();
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    },
+                    async importRemoteChart(meta) {
+                        const { name, url, title } = meta;
+                        if (!name || !url || charts[name]) return;
+
+                        try {
+                            loading.value = true;
+                            await nextTick();
+                            const res = await fetch(url);
+                            const code = await res.text();
+                            this.addChartCode(code);
+                        } catch (e) {
+                            console.error(e);
+                            ELEMENT_PLUS.ElMessage.error('加载失败');
+                        } finally {
+                            loading.value = false;
+                        }
+                    }
+                });
+
+                watch(() => chartConfig.chartsVisible, (newVal, oldVal) => {
+                    DmstatStorage.set('chartsVisible', chartConfig.chartsVisible);
+                }, { deep: true });
+
+                function registerChartAction(chartName, chartDef) {
+                    if (!Array.isArray(chartDef.actions)) return;
+                    chartDef.actions.forEach(({ key, icon, title, method }) => {
+                        if (!key || !method) return;
+                        chartsActions[`${chartName}:${key}`] = {
+                            icon,
+                            title,
+                            apply: chart => chart === chartName,
+                            handler: async chart => {
+                                try {
+                                    await charts[chart][method]();
+                                } catch (e) {
+                                    console.error(`[chartsActions] ${chart}.${method} 执行失败`, e);
+                                }
+                            }
+                        };
+                    });
+                }
 
                 function formatProgress(ms) {
                     const s = Math.floor(ms / 1000);
@@ -1093,7 +1206,7 @@ onmessage = function (e) {
                         currentSubFilt.value = subFilt;
                         danmakuCount.value.filtered = danmakuList.current.length;
                         if (ifchart) {
-                            for (const chart of chartsVisible.value) {
+                            for (const chart of chartConfig.chartsVisible) {
                                 await renderChart(chart);
                             }
                         }
@@ -1229,66 +1342,27 @@ onmessage = function (e) {
                     danmakuList.filtered = [...danmakuList.original];
                     danmakuList.current = [...danmakuList.filtered];
                     danmakuCount.value.origin = danmakuList.original.length;
-                    await updateDispDanmakus(true);
 
-                    function registerChartAction(chartName, chartDef) {
-                        if (!Array.isArray(chartDef.actions)) return;
-                        chartDef.actions.forEach(({ key, icon, title, method }) => {
-                            if (!key || !method) return;
-                            chartsActions[`${chartName}:${key}`] = {
-                                icon,
-                                title,
-                                apply: chart => chart === chartName,
-                                handler: async chart => {
-                                    try {
-                                        await charts[chart][method]();
-                                    } catch (e) {
-                                        console.error(`[chartsActions] ${chart}.${method} 执行失败`, e);
-                                    }
-                                }
-                            };
-                        });
-                    }
                     for (const [chartName, chartDef] of Object.entries(charts)) {
                         registerChartAction(chartName, chartDef);
                     }
-                    window.__DMSTAT_CUSTOM_CHARTS__ = window.__DMSTAT_CUSTOM_CHARTS__ || {};
                     window.addCustomChart = function (chartName, chartDef) {
-                        if (!chartName || typeof chartDef !== 'object') {
-                            console.warn('chartName 必须为字符串，chartDef 必须为对象');
-                            return;
-                        }
-                        if (chartsVisible.value.includes(chartName)) {
-                            console.warn(`图表 "${chartName}" 已存在`);
-                            return;
-                        }
-                        chartDef.ctx = {
-                            ELEMENT_PLUS,
-                            ECHARTS,
-                            chartsActions,
-                            displayedDanmakus,
-                            danmakuCount,
-                            danmakuList,
-                            videoData,
-                            registerChartAction,
-                            formatProgress,
-                            formatTime
-                        }
-                        registerChartAction(chartName, chartDef);
-                        window.__DMSTAT_CUSTOM_CHARTS__[chartName] = chartDef;
-                        charts[chartName] = {
-                            instance: null,
-                            ...chartDef
-                        };
-                        chartsVisible.value.push(chartName);
-                        nextTick(() => {
-                            renderChart(chartName);
-                        });
-                        console.log(`✅ 已添加图表 "${chartName}"（仅保存在本页会话中）`);
+                        chartConfig.addChartDef(chartName, chartDef);
+                        console.log(`✅ 已添加图表 "${chartDef.title || chartName}"`);
                     };
-                    for (const [chartName, chartDef] of Object.entries(window.__DMSTAT_CUSTOM_CHARTS__)) {
-                        window.addCustomChart(chartName, chartDef);// 恢复本页面已有的自定义图表
+                    const customCharts = DmstatStorage.get('customCharts', {});
+                    for (const [name, code] of Object.entries(customCharts)) {
+                        try {
+                            const def = eval('(' + code + ')');
+                            chartConfig.addChartDef(name, def, false);
+                        } catch (e) {
+                            console.warn(`无法加载图表 ${name}`, e);
+                        }
                     }
+                    chartConfig.chartsVisible = DmstatStorage.get('chartsVisible', Object.keys(charts));
+                    chartConfig.loadRemoteList();
+
+                    await updateDispDanmakus(true);
                 });
                 return {
                     h,
@@ -1308,8 +1382,8 @@ onmessage = function (e) {
                     scrollToTime,
                     panelInfo,
                     chartsActions,
-                    chartsVisible,
                     chartHover,
+                    chartConfig,
                     clearSubFilter,
                     commitSubFilter,
                     applyActiveSubFilters,
@@ -1327,15 +1401,7 @@ onmessage = function (e) {
             <div id="wrapper-title" style="text-align: left;">
                 <h3>{{ videoData.title || '加载中...' }}
                     <image-popover-link :imgSrc="videoData.pic" alt="视频封面" :width="360" :height="180">
-                        <svg t="1746010439489" class="icon" viewBox="0 0 1029 1024" version="1.1"
-                            xmlns="http://www.w3.org/2000/svg" p-id="5042" width="20" height="20">
-                            <path
-                                d="M487.966546 867.289336c-0.191055 0-0.38211 0-0.577318-0.008306-85.119089-0.926201-171.396967-8.3898-256.428835-22.178976a29.812863 29.812863 0 0 0-0.598085-0.095528c-75.890309-13.224318-150.032051-79.636645-165.274905-148.050895l-0.161981-0.751759c-33.405525-161.104925-33.405525-324.473435 0-485.570054 0.053994-0.249202 0.103834-0.498404 0.161981-0.743452C80.326104 141.467809 154.471999 75.051329 230.370615 61.835317l0.593931-0.09968a1713.961362 1713.961362 0 0 1 550.250427 0.09968c75.890309 13.207705 150.036204 79.624185 165.279059 148.055049 0.058147 0.249202 0.107988 0.494251 0.157827 0.743452 21.672265 104.444702 29.385067 210.417843 22.943196 314.962227-1.761027 28.620847-26.390489 50.355413-55.011337 48.627612-28.625001-1.765181-50.38864-26.390489-48.627612-55.011336 5.864553-95.195155-1.158789-191.769229-20.878973-287.043298-6.836441-29.630115-51.015798-62.56631-81.414286-67.99476a1610.243499 1610.243499 0 0 0-515.735953 0c-30.394335 5.432603-74.577845 38.368798-81.422593 67.990606-30.377721 146.817345-30.381874 295.690607 0 442.512105 6.853054 29.621808 51.028258 62.55385 81.422593 67.986453 79.81524 12.925276 160.756042 19.923698 240.587896 20.791752 28.670688 0.315656 51.65957 23.802942 51.352221 52.481936-0.311502 28.479633-23.49144 51.352221-51.900465 51.352221z"
-                                p-id="5043" fill="#409eff"></path>
-                            <path
-                                d="M727.790223 570.539621c20.272581 20.272581 53.150628 20.276734 73.427362 0s20.276734-53.146475 0-73.423209l-102.762589-102.766742a51.917079 51.917079 0 0 0-73.427362 0l-86.036983 86.036982-66.055138-66.055137c-20.272581-20.272581-53.146475-20.272581-73.423209 0l-162.716431 162.712278c-20.272581 20.280888-20.272581 53.150628 0 73.423209a51.759251 51.759251 0 0 0 36.711604 15.209628c13.286619 0 26.573238-5.075414 36.711605-15.209628l126.004827-126.004826 66.055137 66.055137c20.276734 20.280888 53.146475 20.280888 73.419056 0l86.04529-86.036983 66.046831 66.059291zM974.911364 766.408222c-20.272581-20.272581-53.142322-20.272581-73.427363 0l-40.877431 40.881585v-133.318905c0-28.670688-23.246391-51.917079-51.917079-51.917079s-51.917079 23.246391-51.917078 51.917079v133.318905l-40.877432-40.881585c-20.285041-20.272581-53.154782-20.272581-73.427362 0-20.272581 20.280888-20.272581 53.150628 0 73.427363l129.510268 129.501961c10.138367 10.134214 23.424986 15.205474 36.711604 15.205474s26.569084-5.07126 36.711605-15.205474l129.510268-129.501961c20.268428-20.276734 20.268428-53.146475 0-73.427363z"
-                                p-id="5044" fill="#409eff"></path>
-                        </svg>
+                        <el-icon style="font-size: 20px;"><el-icon-picture-filled /></el-icon>
                     </image-popover-link>
                 </h3>
                 <el-tag type="success" v-if="videoData.page_cur">
@@ -1358,15 +1424,7 @@ onmessage = function (e) {
                         :href="'https://space.bilibili.com/' + videoData.owner.mid" />
                     <image-popover-link :imgSrc="videoData.owner?.face" alt="UP主头像" :width="100" :height="100"
                         :rounded="true" linkStyle="margin-left: 8px; vertical-align: -2px;">
-                        <svg t="1746010657723" class="icon" viewBox="0 0 1024 1024" version="1.1"
-                            xmlns="http://www.w3.org/2000/svg" p-id="10144" width="16" height="16">
-                            <path
-                                d="M1024 512c0-281.6-230.4-512-512-512S0 230.4 0 512s230.4 512 512 512 512-230.4 512-512z m-512 448c-249.6 0-448-198.4-448-448s198.4-448 448-448 448 198.4 448 448-198.4 448-448 448z"
-                                fill="#409eff" p-id="10145"></path>
-                            <path
-                                d="M627.2 505.6c44.8-38.4 76.8-89.6 76.8-153.6 0-108.8-83.2-192-192-192s-192 83.2-192 192c0 64 32 115.2 76.8 153.6-102.4 44.8-172.8 147.2-172.8 262.4 0 19.2 12.8 32 32 32s32-12.8 32-32c0-121.6 102.4-224 224-224s224 102.4 224 224c0 19.2 12.8 32 32 32s32-12.8 32-32c0-115.2-70.4-217.6-172.8-262.4zM512 480c-70.4 0-128-57.6-128-128s57.6-128 128-128 128 57.6 128 128-57.6 128-128 128z"
-                                fill="#409eff" p-id="10146"></path>
-                        </svg>
+                        <el-icon style="font-size: inherit;"><el-icon-user /></el-icon>
                     </image-popover-link><br />
                     <info-line label="发布时间：" :value="videoData.pubdate ? formatTime(videoData.pubdate) : '-'" /><br />
                     <info-line label="截止" :value="videoData.fetchtime ? formatTime(videoData.fetchtime) : '-'" />
@@ -1374,7 +1432,8 @@ onmessage = function (e) {
                     <info-line type="primary" label="总弹幕数：" suffix="，" :value="videoData.stat?.danmaku || '-'" />
                     <info-line v-if="videoData.owner" label="载入实时弹幕" suffix="条" :value="danmakuCount.origin"
                         :href="'https://api.bilibili.com/x/v1/dm/list.so?oid=' + videoData.cid" />
-                    <action-tag type="primary" @click="downloadData" title="下载所有数据">📥</action-tag>
+                    <action-tag type="primary" @click="downloadData" title="下载所有数据">
+                        <el-icon style="font-size: 12px;"><el-icon-download /></el-icon></action-tag>
                 </p>
                 <p style="
                     background-color: #f4faff;
@@ -1422,6 +1481,7 @@ onmessage = function (e) {
                     <span style="flex: 1; font-size: 14px; color: #333; height: 32px; align-content: center;">
                         弹幕列表
                     </span>
+
                     <el-popover placement="bottom" width="160" trigger="click" v-if="displayedDanmakus.length < 100">
                         <template v-slot:reference>
                             <el-button text style="margin-right: 20px;" circle @click.stop />
@@ -1491,13 +1551,63 @@ onmessage = function (e) {
                         <path d="M64 256h896v64H64z" fill="#409eff" p-id="2671"></path>
                     </svg>
                 </el-button>
+                <span></span>
+                <el-button @click="chartConfig.open()" circle title="设置">
+                    <el-icon style="font-size: 16px;"><el-icon-setting /></el-icon>
+                </el-button>
             </div>
         </el-header>
+
+        <el-dialog v-model="chartConfig.show" title="图表设置" style="min-width: 400px;">
+            <el-scrollbar style="height: 60%;">
+                <el-checkbox-group v-model="chartConfig.chartsVisible" @change="chartConfig.cheackChartChange()">
+                    <el-row v-for="item in chartConfig.chartsAvailable" :key="item.key">
+                        <el-col :span="20">
+                            <el-checkbox :label="item.key">{{ item.title }}</el-checkbox>
+                        </el-col>
+                        <el-col :span="4" v-if="item.isCustom">
+                            <el-button size="small" type="danger" @click="chartConfig.removeCustomChart(item.key)">
+                                <el-icon style="font-size: 16px;"><el-icon-delete /></el-icon></el-button>
+                        </el-col>
+                    </el-row>
+                </el-checkbox-group>
+
+                <el-divider>可选图表</el-divider>
+                <el-button v-if="!chartConfig.remoteChartList.length" type="primary" size="small" style="width: 100px;"
+                    @click="chartConfig.loadRemoteList()">🌐 获取列表</el-button>
+                <el-table :data="chartConfig.remoteChartList" size="small" v-if="chartConfig.remoteChartList.length">
+                    <el-table-column prop="title" />
+                    <el-table-column width="100">
+                        <template #default="{ row }">
+                            <el-button :type="chartConfig.isCostomAdded(row.name) ? 'default' : 'success'"
+                                @click="chartConfig.importRemoteChart(row)" size="small" style="width: 60px">
+                                {{ chartConfig.isCostomAdded(row.name) ? '已加载' : '加载' }}</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+
+                <el-divider>自定义图表</el-divider>
+                <el-button size="small" type="primary" style="width: 100px;"
+                    @click="chartConfig.customInputVisible = !chartConfig.customInputVisible">
+                    {{ chartConfig.customInputVisible ? '收起' : '➕ 添加图表' }}
+                </el-button>
+                <div v-show="!chartConfig.customInputVisible" style="height: 30px;"></div>
+                <el-collapse-transition>
+                    <div v-show="chartConfig.customInputVisible">
+                        <el-input type="textarea" v-model="chartConfig.newChartCode" rows="10"
+                            style="margin-bottom: 10px; margin-top: 10px;" />
+                        <el-button type="success" size="small" style="width: 100px;"
+                            @click="chartConfig.addCustomChart()">✅ 添加</el-button>
+                    </div>
+                </el-collapse-transition>
+            </el-scrollbar>
+        </el-dialog>
+
         <el-main style="overflow-y: auto;">
             <div id="wrapper-chart" style="min-width: 400px;">
-                <div v-for="(chart, index) in chartsVisible" :key="chart" :style="{
+                <div v-for="(chart, index) in chartConfig.chartsVisible" :key="chart" :style="{
                     position: 'relative',
-                    marginBottom: index < chartsVisible.length - 1 ? '20px' : '0'
+                    marginBottom: index < chartConfig.chartsVisible.length - 1 ? '20px' : '0'
                 }" @mouseenter="chartHover = chart" @mouseleave="chartHover = null">
                     <!-- 控制按钮 -->
                     <div v-if="chartHover === chart" :style="{
@@ -1881,7 +1991,6 @@ onmessage = function (e) {
         document.body.removeChild(link);
         URL.revokeObjectURL(blobUrl);
     }
-
 
     const urlOfUtils = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/BiliDanmakuUtils.js';
     const urlOfConverter = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/BiliMidHashConverter.js';
