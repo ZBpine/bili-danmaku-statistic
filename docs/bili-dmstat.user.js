@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.10.0
+// @version      1.10.2
 // @description  获取B站视频页弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -31,7 +31,6 @@
         addCss(href) { this.addEl('link', { rel: 'stylesheet', href }); }
         addStyle(cssText) { this.addEl('style', { textContent: cssText }); }
     }
-
     // iframe里初始化统计面板应用
     async function initIframeApp(iframe, dataParam, panelInfoParam) {
         const doc = iframe.contentDocument;
@@ -47,7 +46,6 @@
         await loader.addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js');
         await loader.addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
         await loader.addScript('https://cdn.jsdelivr.net/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js');
-        loader.addStyle(`.base { vertical-align: baseline; }`);
 
         const DanmukuTableFactory = (await import('https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/DanmukuTable.js')).default;
         const DanmukuTable = DanmukuTableFactory(win.Vue, win.ElementPlus);
@@ -59,7 +57,7 @@
         doc.body.appendChild(appRoot);
 
         // 挂载Vue
-        const { createApp, ref, reactive, onMounted, nextTick, h, computed, watch } = win.Vue;
+        const { createApp, ref, reactive, onMounted, nextTick, h, computed } = win.Vue;
         const ELEMENT_PLUS = win.ElementPlus;
         const ECHARTS = win.echarts;
         const ICONS = win.ElementPlusIconsVue;
@@ -807,6 +805,9 @@ onmessage = function (e) {
                             ...fullList.filter(c => !visibleSet.has(c.key))
                         ];
                     },
+                    saveChartVisable() {
+                        DmstatStorage.set('chartsVisible', this.chartsVisible);
+                    },
                     async cheackChartChange() {
                         this.sortChartsAvailable();
                         const newVisible = [...this.chartsVisible];
@@ -816,6 +817,8 @@ onmessage = function (e) {
                         const added = newVisible.filter(k => !oldVisible.includes(k));
                         for (const chart of added) await renderChart(chart);
                         this.oldChartsVisible = newVisible;
+
+                        this.saveChartVisable();
                     },
                     removeCustomChart(name) {
                         const cfg = DmstatStorage.getConfig();
@@ -823,6 +826,7 @@ onmessage = function (e) {
                         DmstatStorage.setConfig(cfg);
                         const idx = this.chartsVisible.indexOf(name);
                         if (idx >= 0) this.chartsVisible.splice(idx, 1);
+                        this.saveChartVisable();
                         disposeChart(name);
                         delete charts[name];
                         this.open(); // 重新加载配置
@@ -867,8 +871,9 @@ onmessage = function (e) {
                         }
                         registerChartAction(chartName, chartDef);
                         charts[chartName] = { instance: null, ...chartDef };
-                        if (visible && !chartConfig.chartsVisible.includes(chartName)) {
-                            chartConfig.chartsVisible.push(chartName);
+                        if (visible && !this.chartsVisible.includes(chartName)) {
+                            this.chartsVisible.push(chartName);
+                            this.saveChartVisable();
                         }
                         nextTick(() => { renderChart(chartName); });
                     },
@@ -908,10 +913,6 @@ onmessage = function (e) {
                         }
                     }
                 });
-
-                watch(() => chartConfig.chartsVisible, (newVal, oldVal) => {
-                    DmstatStorage.set('chartsVisible', chartConfig.chartsVisible);
-                }, { deep: true });
 
                 function registerChartAction(chartName, chartDef) {
                     if (!Array.isArray(chartDef.actions)) return;
@@ -1803,7 +1804,7 @@ onmessage = function (e) {
         Object.assign(btn.style, {
             position: 'fixed',
             left: '-100px',
-            bottom: '40px',
+            bottom: '150px',
             zIndex: '9997',
             width: '120px',
             height: '40px',
