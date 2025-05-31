@@ -1,5 +1,80 @@
+export class DanmakuDOMAdapter {
+    constructor() {
+        this.container = null;
+        this.videoEl = null;
+        this.callbacks = {};
+    }
+    injectStyle(id, content) {
+        if (id && document.getElementById(id)) return; // 防止重复添加
+        const style = this.createElement({ elId: id, elName: 'style', elContent: content });
+        document.head.appendChild(style);
+    }
+    injectElement(parent = document.body, element) {
+        if (element.id && document.getElementById(element.id)) return;
+        if (!parent) return;
+        parent.appendChild(element);
+    }
+    createElement({ elName = 'div', elId = '', elContent = '', elStyle = {} }) {
+        const element = document.createElement(elName);
+        if (elId) element.id = elId;
+        if (elContent) element.textContent = elContent;
+        Object.assign(element.style, elStyle);
+        return element;
+    }
+    addContainer(container) {
+        const wrapper = this.getVideoWrapper();
+        if (!wrapper) return;
+        wrapper.style.position = 'relative';
+        this.injectElement(wrapper, container);
+    }
+    getVideoElement() {
+        const video = document.querySelector('video');
+        if (video !== this.videoEl) this.bindVideoEvent(video);
+        return video;
+    }
+    bindVideoEvent(video) {
+        if (!video) return;
+        this.videoEl = video;
+        video.addEventListener('seeked', () => {
+            this.callbacks.onSeek?.();
+        });
+        video.addEventListener('loadedmetadata', () => {
+            this.callbacks.onResize?.();
+        });
+    }
+    getVideoWrapper() {
+        const video = document.querySelector('video');
+        if (!video) return null;
+
+        const player = document.querySelector('.html5-video-player');
+        if (player) return player;
+
+        let parent = video.parentElement;
+        while (parent) {
+            const rect = parent.getBoundingClientRect();
+            if (rect.height > 0 && rect.width > 0) return parent;
+            parent = parent.parentElement;
+        }
+        return null;
+    }
+    getVideoSize() {
+        const wrapper = this.getVideoWrapper();
+        const rect = wrapper?.getBoundingClientRect();
+        return rect;
+    }
+    addResizeListener() {
+        window.addEventListener('resize', () => this.callbacks.onResize?.());
+    }
+    getPlayingState() {
+        const video = this.getVideoElement();
+        if (!video) return { paused: true, currentTime: 0 };
+        return { paused: video.paused, currentTime: video.currentTime };
+    }
+}
+
 export class BiliDanmakuPlayer {
     constructor() {
+        this.domAdapter = new DanmakuDOMAdapter();
         this.danmakuList = [];
         this.danmakuEnabled = true;
         this.isLoaded = false;
@@ -7,18 +82,27 @@ export class BiliDanmakuPlayer {
         this.topTracks = [];
         this.bottomTracks = [];
         this.LINE_HEIGHT = 30;
-        this.lastVideoElement = null;
-        this.container = document.createElement('div');
-        Object.assign(this.container.style, {
-            position: 'absolute',
-            overflow: 'hidden',
-            top: '0',
-            left: '0',
-            width: '100%',
-            height: '100%',
-            pointerEvents: 'none',
-            zIndex: '9998'
-        });
+        this.displayArea = 1;
+        this.container = this.domAdapter.createElement({
+            elId: 'danmaku-player-container',
+            elStyle: {
+                position: 'absolute',
+                overflow: 'hidden',
+                top: '0',
+                left: '0',
+                width: '100%',
+                height: '100%',
+                pointerEvents: 'none',
+                zIndex: '9998'
+            }
+        })
+        this.domAdapter.callbacks.onSeek = () => {
+            this.danmakuList.forEach(dm => dm._shown = false);
+            Array.from(this.container.children).forEach(child => child.remove());
+        };
+        this.domAdapter.callbacks.onResize = () => {
+            this.updateTracks();
+        };
         this.logStyle = {
             tag: 'Danmaku Player',
             style: 'background: #FF0000; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;',
@@ -32,29 +116,18 @@ export class BiliDanmakuPlayer {
         console.error(`%c${this.logStyle.tag}`, this.logStyle.errorStyle, ...args);
     }
     init() {
-        const player = document.querySelector('.html5-video-player');
-        if (!player) return false;
-        player.style.position = 'relative'; // 确保 relative 定位
-        player.appendChild(this.container);
-
+        this.domAdapter.addContainer(this.container);
         this.updateTracks();
-        window.addEventListener('resize', () => this.updateTracks());
-        this.bindVideo(document.querySelector('video'));
 
-        this.observe();
-        this.injectAnimationStyle();
-        return true;
-    }
-    injectAnimationStyle() {
-        if (document.getElementById('danmaku-style')) return; // 防止重复添加
-        const style = document.createElement('style');
-        style.id = 'danmaku-style';
-        style.textContent = `
+        this.domAdapter.addResizeListener();
+        this.domAdapter.getVideoElement();
+
+        this.domAdapter.injectStyle('danmaku-style', `
             @keyframes move {
                 from { transform: translateX(0); }
                 to { transform: translateX(-100%); }
-            }`;
-        document.head.appendChild(style);
+            }`);
+        this.observe();
     }
     load(danmakuData) {
         this.danmakuList = danmakuData || [];
@@ -71,13 +144,13 @@ export class BiliDanmakuPlayer {
         }
     }
     updateTracks() {
-        const player = document.querySelector('.html5-video-player');
-        const rect = player?.getBoundingClientRect();
+        const rect = this.container.getBoundingClientRect();
         if (!rect) return;
 
-        const height = rect.height;
+        const height = rect.height * this.displayArea;
         const maxTracks = Math.floor(height / this.LINE_HEIGHT);
-        const trackCount = Math.max(3, Math.min(maxTracks, 30)); // 最少 3 条，最多 30 条
+        // const trackCount = Math.max(3, Math.min(maxTracks, 30)); // 最少 3 条，最多 30 条
+        const trackCount = Math.max(3, maxTracks); // 最少 3 条
 
         this.scrollTracks = new Array(trackCount).fill(null);
         this.topTracks = new Array(Math.floor(trackCount / 3)).fill(null);
@@ -91,88 +164,80 @@ export class BiliDanmakuPlayer {
                 return i;
             }
         }
-        return Math.floor(Math.random() * tracks.length);
+        const index = Math.floor(Math.random() * tracks.length);    //未找到则随机一条
+        tracks[index] = dmid;
+        return index;
     }
     showDanmaku(dm) {
         if (!this.danmakuEnabled) return;
 
-        // 样式设置
-        const el = document.createElement('div');
-        el.textContent = dm.content;
-        el.style.position = 'absolute';
-        el.style.whiteSpace = 'nowrap';
-        el.style.fontSize = `${dm.fontsize || 18}px`;
-        el.style.color = `#${(dm.color || 0xffffff).toString(16).padStart(6, '0')}`;
-        el.style.fontWeight = 'bold';
-        el.style.textShadow = '1px 1px 2px black';
-        el.style.pointerEvents = 'none';
-        el.style.zIndex = '10000';
-
+        const el = this.domAdapter.createElement({
+            elContent: dm.content, elStyle: {
+                position: 'absolute',
+                whiteSpace: 'nowrap',
+                fontSize: `${dm.fontsize || 18}px`,
+                color: `#${(dm.color || 0xffffff).toString(16).padStart(6, '0')}`,
+                fontWeight: 'bold',
+                textShadow: '1px 1px 2px black',
+                pointerEvents: 'none',
+                zIndex: '10000'
+            }
+        });
         if (dm.mode === 5) {
             // 顶部弹幕
-            const track = this.getFreeTrack(this.topTracks, dm.dmid);
+            const track = this.getFreeTrack(this.topTracks, dm.id);
             el.style.top = `${track * this.LINE_HEIGHT + 5}px`;
             el.style.left = '50%';
             el.style.transform = 'translateX(-50%)';
-            this.container.appendChild(el);
+            this.domAdapter.injectElement(this.container, el);
             setTimeout(() => {
-                if (this.topTracks[track] === dm.dmid) this.topTracks[track] = null;
+                if (this.topTracks[track] === dm.id) this.topTracks[track] = null;
                 el.remove();
-            }, 6000);
+            }, 4000);
         } else if (dm.mode === 4) {
             // 底部弹幕
-            const track = this.getFreeTrack(this.bottomTracks, dm.dmid);
+            const track = this.getFreeTrack(this.bottomTracks, dm.id);
             el.style.bottom = `${track * this.LINE_HEIGHT + 5}px`;
             el.style.left = '50%';
             el.style.transform = 'translateX(-50%)';
-            this.container.appendChild(el);
+            this.domAdapter.injectElement(this.container, el);
             setTimeout(() => {
-                if (this.bottomTracks[track] === dm.dmid) this.bottomTracks[track] = null;
+                if (this.bottomTracks[track] === dm.id) this.bottomTracks[track] = null;
                 el.remove();
-            }, 6000);
+            }, 4000);
         } else {
             // 滚动弹幕
-            const track = this.getFreeTrack(this.scrollTracks, dm.dmid);
+            const track = this.getFreeTrack(this.scrollTracks, dm.id);
             el.style.top = `${track * this.LINE_HEIGHT}px`;
             el.style.left = '100%';
             el.style.transition = 'transform 6s linear';
-            this.container.appendChild(el);
+            this.domAdapter.injectElement(this.container, el);
 
             // 启动滚动动画
             requestAnimationFrame(() => {
-                const totalWidth = el.getBoundingClientRect().width;
-                el.style.transform = `translateX(-${window.innerWidth + totalWidth}px)`;
+                const containerWidth = this.container.getBoundingClientRect().width;
+                const dmWidth = el.getBoundingClientRect().width;
+                el.style.transform = `translateX(-${containerWidth + dmWidth}px)`;
             });
 
-            // 释放轨道
+            // 提前释放轨道
             setTimeout(() => {
-                if (this.scrollTracks[track] === dm.dmid) this.scrollTracks[track] = null;
+                if (this.scrollTracks[track] === dm.id) this.scrollTracks[track] = null;
+            }, 2000);
+            setTimeout(() => {
                 el.remove();
             }, 6500);
         }
     }
-    bindVideo(video) {
-        if (!video) return;
-        this.lastVideoElement = video;
-
-        video.addEventListener('seeked', () => {
-            this.danmakuList.forEach(dm => dm._shown = false);
-            Array.from(this.container.children).forEach(child => child.remove());
-        });
-
-        video.addEventListener('loadedmetadata', () => {
-            this.updateTracks();
-        });
-        this.logTag('[🎯 绑定 video 事件]');
-    }
     observe() {
-        setInterval(() => {
+        if (this._observerTimer) return;
+        this._observerTimer = setInterval(() => {
             if (!this.isLoaded || !this.danmakuEnabled) return;
-            const video = document.querySelector('video');
-            if (video !== this.lastVideoElement) this.bindVideo(video);
-            if (!video || video.paused) return;
 
-            const now = video.currentTime * 1000;
+            const state = this.domAdapter.getPlayingState();
+            if (state.paused) return;
+
+            const now = state.currentTime * 1000;
             const windowSize = 300;
 
             for (const dm of this.danmakuList) {
@@ -182,5 +247,19 @@ export class BiliDanmakuPlayer {
                 }
             }
         }, 200);
+    }
+    clear() {
+        this.danmakuList = [];
+        this.isLoaded = false;
+
+        Array.from(this.container.children).forEach(el => el.remove());
+        this.logTag('🔻 弹幕已清空');
+    }
+    setOpacity(value) {
+        this.container.style.opacity = value;
+    }
+    setDisplayArea(value) {
+        this.displayArea = value;
+        this.updateTracks();
     }
 }
