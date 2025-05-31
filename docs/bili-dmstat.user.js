@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.10.2
-// @description  获取B站视频页弹幕数据，并生成统计页面
+// @version      1.10.3
+// @description  获取B站弹幕数据，并生成统计页面
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
 // @match        https://www.bilibili.com/video/*
@@ -147,7 +147,7 @@
                     current: []     //子筛选提交后
                 };
                 const DmstatStorage = {
-                    key: 'dmstat',
+                    key: 'dm-stat',
                     getConfig() {
                         return JSON.parse(localStorage.getItem(this.key) || '{}');
                     },
