@@ -39,7 +39,7 @@ export class BiliDanmakuUtils {
                 ctime: parseInt(parts[4]),
                 pool: parseInt(parts[5]),
                 midHash: parts[6],
-                dmid: parts[7],
+                id: parts[7],
                 weight: parseInt(parts[8]),
                 content: d.textContent.trim()
             });
