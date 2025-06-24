@@ -2,26 +2,31 @@
     {
         "name": "date",
         "title": "发送日期分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-date.js"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-date.js",
+        "path": "docs/charts/chart-date.js"
     },
     {
         "name": "hour",
         "title": "发送时间分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-hour.js"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-hour.js",
+        "path": "docs/charts/chart-hour.js"
     },
     {
         "name": "pool",
         "title": "弹幕池分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-pool.js"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-pool.js",
+        "path": "docs/charts/chart-pool.js"
     },
     {
         "name": "weight",
         "title": "弹幕屏蔽等级分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-weight.js"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-weight.js",
+        "path": "docs/charts/chart-weight.js"
     },
     {
         "name": "mode",
         "title": "弹幕类型分布",
-        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-mode.js"
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-mode.js",
+        "path": "docs/charts/chart-mode.js"
     }
 ]
