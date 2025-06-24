@@ -26,6 +26,7 @@
         await applySubFilter({
             value: level,
             filterFn: data => (data || []).filter(d => (d.weight ?? 0) === level),
+            filterJudge: d => (d.weight ?? 0) === level,
             labelVNode: h => h('span', [
                 '屏蔽等级：',
                 h(ELEMENT_PLUS.ElTag, { type: 'info', size: 'small', style: 'vertical-align: baseline' }, String(level))

@@ -22,6 +22,7 @@
         await applySubFilter({
             value: selectedHour,
             filterFn: (data) => data.filter(d => new Date(d.ctime * 1000).getHours() === selectedHour),
+            filterJudge: d => new Date(d.ctime * 1000).getHours() === selectedHour,
             labelVNode: (h) => h('span', [
                 '每天',
                 h(ELEMENT_PLUS.ElTag, {

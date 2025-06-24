@@ -6,7 +6,7 @@
     render(data) {
         const countMap = {};
         data.forEach(d => {
-            const date = formatTime(d.ctime).split(' ')[0];
+            const date = new Date(d.ctime * 1000).toLocaleDateString();
             countMap[date] = (countMap[date] || 0) + 1;
         });
         // 按日期升序排序
@@ -37,7 +37,8 @@
         const selectedDate = params.name;
         await applySubFilter({
             value: selectedDate,
-            filterFn: (data) => data.filter(d => formatTime(d.ctime).startsWith(selectedDate)),
+            filterFn: (data) => data.filter(d => new Date(d.ctime * 1000).toLocaleDateString() === selectedDate),
+            filterJudge: d => new Date(d.ctime * 1000).toLocaleDateString() === selectedDate,
             labelVNode: (h) => h('span', [
                 '日期',
                 h(ELEMENT_PLUS.ElTag, {

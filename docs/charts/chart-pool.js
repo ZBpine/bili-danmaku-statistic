@@ -46,6 +46,7 @@
         await applySubFilter({
             value: poolLabel,
             filterFn: (data) => data.filter(d => d.pool === poolVal),
+            filterJudge: d => d.pool === poolVal,
             labelVNode: (h) => h('span', [
                 h(ELEMENT_PLUS.ElTag, {
                     type: 'info',

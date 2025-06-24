@@ -43,6 +43,7 @@
         await applySubFilter({
             value: typeVal,
             filterFn: data => data.filter(d => d.mode === typeVal),
+            filterJudge: d => d.mode === typeVal,
             labelVNode: h => h('span', [
                 '类型：',
                 h(ELEMENT_PLUS.ElTag, { type: 'info', size: 'small', style: 'vertical-align: baseline' }, typeLabel)

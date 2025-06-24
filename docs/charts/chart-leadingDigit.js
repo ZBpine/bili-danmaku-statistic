@@ -56,6 +56,7 @@
         await applySubFilter({
             value: selectedDigit,
             filterFn: (data) => data.filter(d => (d.content.match(/\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit)),
+            filterJudge: d => (d.content.match(/\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit),
             labelVNode: (h) => h('span', [
                 '首位数字为 ',
                 h(ELEMENT_PLUS.ElTag, {
