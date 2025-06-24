@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      2.0.0
+// @version      2.0.1
 // @description  获取B站弹幕数据，并生成统计页面。
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
@@ -51,7 +51,6 @@
     async function initIframeApp(iframe, dataMgr, panelInfoParam) {
         const doc = iframe.contentDocument;
         const win = iframe.contentWindow;
-        const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.0.0/';
 
         // 引入外部库
         const loader = new ResourceLoader(doc);
@@ -1913,6 +1912,7 @@ onmessage = function (e) {
             ${ResourceLoader.toString()}
             ${initIframeApp.toString()}
             ${BiliMidHashConverter.toString()}
+            const statPath = '${statPath}';
             const dmData = {};
             Object.assign(dmData, ${JSON.stringify(dmData)});
             const iframe = document.createElement('iframe');
@@ -1974,7 +1974,7 @@ onmessage = function (e) {
         URL.revokeObjectURL(blobUrl);
     }
 
-    const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.0.0/';
+    const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.0.1/';
     const downPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bilibili-danmaku-download@1.6.1/'
     const { BiliMidHashConverter } = await import(statPath + 'docs/BiliMidHashConverter.js');
     const { createBiliDataManagerImport } = await import(downPath + 'tampermonkey/BiliDataManager.js');
