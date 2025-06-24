@@ -1,5 +1,5 @@
 export default function createVideoInfoPanel(Vue, ElementPlus) {
-    const { h } = Vue;
+    const { h, ref } = Vue;
     return {
         name: 'VideoInfoPanel',
         props: {
@@ -15,6 +15,7 @@ export default function createVideoInfoPanel(Vue, ElementPlus) {
                 { key: 'danmaku', label: '弹幕' },
                 { key: 'reply', label: '评论' },
             ];
+            const descExpanded = ref(false);
 
             return () =>
                 h(ElementPlus.ElCard, { shadow: 'never', style: 'margin-bottom: 10px;' }, {
@@ -73,7 +74,11 @@ export default function createVideoInfoPanel(Vue, ElementPlus) {
                                 ? h(ElementPlus.ElText, {
                                     type: 'info',
                                     size: 'small',
-                                    style: 'flex: 1; display: block; white-space: pre-wrap; align-self: flex-start;'
+                                    lineClamp: descExpanded.value ? undefined : 7,
+                                    style: 'white-space: pre-wrap; align-self: flex-start; cursor: pointer;',
+                                    onClick: () => {
+                                        descExpanded.value = !descExpanded.value;
+                                    }
                                 }, () => props.videoInfo.desc)
                                 : null,
                         ]),
