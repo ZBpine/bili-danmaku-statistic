@@ -6,16 +6,17 @@
 
 ### 功能
 1. 点击左下角“弹幕统计”按钮会弹出统计面板，点击其他区域收回。
-2. 可统计用户发送、弹幕词云、密度分布统计等。
-3. 右上方文本框输入正则表达式，可筛选弹幕。
-4. 点击用户弹幕统计可单独查看某用户发的弹幕。再点击左边的用户midhash可反查用户📦。
-5. 其他图表也都可点击查看对应弹幕。
-6. 可查看视频封面、up头像等。
+2. 可加载XML弹幕、ProtoBuf实时弹幕、历史弹幕（超全）。
+3. 可统计用户发送、弹幕词云、密度分布统计等。
+4. 右上方文本框输入正则表达式，可筛选弹幕。
+5. 点击用户弹幕统计可单独查看某用户发的弹幕。再点击左边的用户midhash可反查用户📦。
+6. 与图表交互可筛选/排除弹幕。
 7. 可在用户主页空间查看midHash，然后在用户弹幕统计定位用户。
-8.  可转为[长条图片](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example02.png)，截长图前可自由调整图表顺序/关闭图表/收起弹幕列表。
+8.  可转为[长条图片](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example02.png)。
 9.  可下载html文件至本地。先新标签页打开，再点击保存。下载至本地后所有图表的交互都保留。
-10. 可添加自定义图表，详见：[添加自定义图表](https://github.com/ZBpine/bili-danmaku-statistic/blob/main/docs/addchart.md)
+10. 可添加自定义图表，详见：[添加自定义图表](https://github.com/ZBpine/bili-danmaku-statistic/blob/main/docs/addchart.md)。
 
+![图片06](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example06.png)
 ![图片01](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example01.png)
 ![图片04](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example04.png)
 ![图片05](https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/images/bili-danmaku-statistic-example05.png)
@@ -77,6 +78,11 @@
 - 增加筛选排除功能
 - 增加下载弹幕json功能，可配合 [YouTube 本地B站弹幕播放器](https://greasyfork.org/zh-CN/scripts/536159-youtube-%E6%9C%AC%E5%9C%B0b%E7%AB%99%E5%BC%B9%E5%B9%95%E6%92%AD%E6%94%BE%E5%99%A8) 使用
 
-**版本1.9**
+**版本1.10**
 - 增加设置与缓存功能，可保存添加的图表
 - 增加更多可选的图表
+
+**版本2.0**
+- 支持ProtoBuf实时弹幕、历史弹幕
+- 支持子筛选排除
+- 优化视频统计面板
