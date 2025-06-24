@@ -26,10 +26,6 @@ export default function createDanmukuTable(Vue, ElementPlus) {
             };
             const highlightedRowIndex = ref(null);
 
-            function formatTime(ts) {
-                const d = new Date(ts * 1000);
-                return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-            }
             function formatProgress(ms) {
                 const s = Math.floor(ms / 1000);
                 const min = String(Math.floor(s / 60)).padStart(2, '0');
@@ -83,9 +79,9 @@ export default function createDanmukuTable(Vue, ElementPlus) {
                             backgroundColor: '#fdfdfd', borderBottom: '1px solid #ebeef5'
                         }
                     }, [
-                        createCell('时间', { width: '80px' }),
+                        createCell('时间', { width: '70px' }),
                         createCell('弹幕内容', { flex: 1 }),
-                        createCell('发送时间', { width: '160px', borderRight: 'none' })
+                        createCell('发送时间', { width: '170px', borderRight: 'none' })
                     ]),
                     // 内容区域
                     h(ElementPlus.ElScrollbar, { ref: scrollbarRef, onScroll }, {
@@ -111,7 +107,7 @@ export default function createDanmukuTable(Vue, ElementPlus) {
                                     onMouseleave: (e) => e.currentTarget.style.backgroundColor = '',
                                     onClick: () => handleRowClick(item)
                                 }, [
-                                    createCell(formatProgress(item.progress), { width: '80px' }),
+                                    createCell(formatProgress(item.progress), { width: '70px' }),
                                     h(ElementPlus.ElTooltip, {
                                         content: `发送用户: ${item.midHash}\n 屏蔽等级: ${item.weight}`,
                                         placement: 'top-start'
@@ -123,7 +119,7 @@ export default function createDanmukuTable(Vue, ElementPlus) {
                                             overflowWrap: 'anywhere',
                                         })
                                     }),
-                                    createCell(formatTime(item.ctime), { width: '160px', borderRight: 'none' })
+                                    createCell(new Date(item.ctime * 1000).toLocaleString(), { width: '170px', borderRight: 'none' })
                                 ])
                             }
                             ))
