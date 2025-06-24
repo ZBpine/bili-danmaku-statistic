@@ -1,15 +1,16 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      1.10.3
-// @description  获取B站弹幕数据，并生成统计页面
+// @version      2.0.0
+// @description  获取B站弹幕数据，并生成统计页面。
 // @author       ZBpine
 // @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/list/watchlater*
 // @match        https://www.bilibili.com/bangumi/play/ep*
 // @match        https://space.bilibili.com/*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      api.bilibili.com
 // @license      MIT
 // @run-at       document-end
 // ==/UserScript==
@@ -17,6 +18,21 @@
 (async () => {
     'use strict';
 
+    const consoleColor = {
+        log: 'background: #01a1d6;',
+        error: 'background: #d63601;',
+        warn: 'background: #d6a001;',
+    }
+    const console = new Proxy(window.console, {
+        get(target, prop) {
+            const original = target[prop];
+            if (typeof original === 'function' && (prop === 'log' || prop === 'error' || prop === 'warn')) {
+                return (...args) => original.call(target, '%cDanmaku Statistic', consoleColor[prop] +
+                    ' color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;', ...args);
+            }
+            return original;
+        }
+    });
     class ResourceLoader {
         constructor(doc = document) {
             this.doc = doc;
@@ -32,9 +48,10 @@
         addStyle(cssText) { this.addEl('style', { textContent: cssText }); }
     }
     // iframe里初始化统计面板应用
-    async function initIframeApp(iframe, dataParam, panelInfoParam) {
+    async function initIframeApp(iframe, dataMgr, panelInfoParam) {
         const doc = iframe.contentDocument;
         const win = iframe.contentWindow;
+        const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.0.0/';
 
         // 引入外部库
         const loader = new ResourceLoader(doc);
@@ -46,9 +63,10 @@
         await loader.addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js');
         await loader.addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
         await loader.addScript('https://cdn.jsdelivr.net/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js');
-
-        const DanmukuTableFactory = (await import('https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/DanmukuTable.js')).default;
-        const DanmukuTable = DanmukuTableFactory(win.Vue, win.ElementPlus);
+        const createVideoInfoPanel = (await import(statPath + 'docs/VideoInfoPanel.js')).default;
+        const createDanmukuTable = (await import(statPath + 'docs/DanmukuTable.js')).default;
+        const VideoInfoPanel = createVideoInfoPanel(win.Vue, win.ElementPlus);
+        const DanmukuTable = createDanmukuTable(win.Vue, win.ElementPlus);
 
         // 创建挂载点
         const appRoot = doc.createElement('div');
@@ -66,33 +84,8 @@
                 ['Setting', 'Plus', 'Delete', 'Download', 'User', 'PictureFilled'].forEach(key => {
                     app.component('ElIcon' + key, ICONS[key]);
                 });
+                app.component('VideoInfoPanel', VideoInfoPanel);
                 app.component('DanmukuTable', DanmukuTable);
-                app.component('ImagePopoverLink', {
-                    props: {
-                        imgSrc: String, alt: String, width: Number, height: Number,
-                        rounded: { type: Boolean, default: false },
-                        linkStyle: { type: String, default: '' }
-                    },
-                    setup(props, { slots }) {
-                        const imgStyle = computed(() => ({ maxWidth: '100%', maxHeight: '100%', borderRadius: props.rounded ? '50%' : '0%' }));
-                        return () => {
-                            if (!props.imgSrc) return null;
-                            return h(ELEMENT_PLUS.ElPopover, {
-                                placement: 'right',
-                                popperStyle: `width: ${props.width}px; height: ${props.height}px; padding: 10px; box-sizing: content-box;`
-                            }, {
-                                default: () => h('div', {
-                                    style: { display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: '100%' }
-                                }, [
-                                    h('img', { src: props.imgSrc, alt: props.alt, style: imgStyle.value })
-                                ]),
-                                reference: () => h(ELEMENT_PLUS.ElLink, {
-                                    href: props.imgSrc, target: '_blank', type: 'primary', style: props.linkStyle
-                                }, slots.default ? slots.default() : '查看')
-                            });
-                        };
-                    }
-                });
                 app.component('ActionTag', {
                     props: { type: { type: String, default: 'info' }, title: String, onClick: Function },
                     setup(props, { slots }) {
@@ -106,26 +99,6 @@
                             }, () => slots.default ? slots.default() : '');
                     }
                 });
-                app.component('InfoLine', {
-                    props: { label: String, suffix: String, value: Object, href: String, type: String },
-                    setup(props) {
-                        const isLink = !!props.href;
-                        const finalType = props.type || (isLink ? 'primary' : 'info');
-                        return () => {
-                            return [
-                                props.label ? `${props.label} ` : ' ',
-                                isLink
-                                    ? h(ELEMENT_PLUS.ElLink, {
-                                        href: props.href, target: '_blank', type: finalType, style: 'vertical-align: baseline;'
-                                    }, () => String(props.value))
-                                    : h(ELEMENT_PLUS.ElTag, {
-                                        type: finalType, size: 'small', style: 'vertical-align: baseline;'
-                                    }, () => String(props.value)),
-                                props.suffix ? ` ${props.suffix}` : ' '
-                            ];
-                        };
-                    }
-                });
 
                 const converter = new BiliMidHashConverter();
                 const displayedDanmakus = ref([]);
@@ -135,7 +108,7 @@
                 const currentSubFilt = ref({});
                 const subFiltHistory = ref([]);
                 const danmakuCount = ref({ origin: 0, filtered: 0 });
-                const videoData = reactive(dataParam.videoData || {});
+                const videoInfo = reactive(dataMgr.info || {});
                 const isTableVisible = ref(true);
                 const isTableAutoH = ref(false);
                 const scrollToTime = ref(null);
@@ -240,6 +213,7 @@
                             await applySubFilter({
                                 value: selectedUser,
                                 filterFn: (data) => data.filter(d => d.midHash === selectedUser),
+                                filterJudge: d => d.midHash === selectedUser,
                                 labelVNode: (h) => h('span', [
                                     '用户',
                                     h(ELEMENT_PLUS.ElLink, {
@@ -449,6 +423,7 @@ onmessage = function (e) {
                             await applySubFilter({
                                 value: keyword,
                                 filterFn: (data) => data.filter(d => new RegExp(keyword, 'i').test(d.content)),
+                                filterJudge: d => new RegExp(keyword, 'i').test(d.content),
                                 labelVNode: (h) => h('span', [
                                     '包含词语',
                                     h(ELEMENT_PLUS.ElTag, {
@@ -493,7 +468,7 @@ onmessage = function (e) {
                             ELEMENT_PLUS.ElMessage.success(`已${this.rangeMode ? '进入' : '退出'}范围选择模式`);
                         },
                         render(data) {
-                            const duration = videoData.duration * 1000; // ms
+                            const duration = videoInfo.duration * 1000; // ms
                             const minutes = duration / 1000 / 60;
 
                             // 动态设置 bin 数量
@@ -619,6 +594,7 @@ onmessage = function (e) {
                             await applySubFilter({
                                 value: `${formatProgress(startMs)} ~ ${formatProgress(endMs)}`,
                                 filterFn: (data) => data.filter(d => d.progress >= startMs && d.progress <= endMs),
+                                filterJudge: d => d.progress >= startMs && d.progress <= endMs,
                                 labelVNode: (h) => h('span', [
                                     '时间段：',
                                     h(ELEMENT_PLUS.ElTag, {
@@ -773,7 +749,7 @@ onmessage = function (e) {
         const selectedDigit = params.name;
         await applySubFilter({
             value: selectedDigit,
-            filterFn: (data) => data.filter(d => (d.content.match(/\\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit)),
+            filterJudge: d => (d.content.match(/\\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit),
             labelVNode: (h) => h('span', [
                 '首位数字为 ',
                 h(ELEMENT_PLUS.ElTag, {
@@ -784,8 +760,7 @@ onmessage = function (e) {
             ])
         });
     }
-}`
-                    ,                                    // 自定义图表代码
+}`,                                                      // 自定义图表代码
                     remoteChartList: [],                 // 远程图表加载数据列表
                     open() {
                         this.show = true;
@@ -864,10 +839,9 @@ onmessage = function (e) {
                             displayedDanmakus,
                             danmakuCount,
                             danmakuList,
-                            videoData,
+                            videoInfo,
                             registerChartAction,
-                            formatProgress,
-                            formatTime
+                            formatProgress
                         }
                         registerChartAction(chartName, chartDef);
                         charts[chartName] = { instance: null, ...chartDef };
@@ -888,7 +862,7 @@ onmessage = function (e) {
                     },
                     async loadRemoteList() {
                         try {
-                            const url = `https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/chart-list.json?t=${Date.now()}`;
+                            const url = statPath + 'docs/chart-list.json?t=' + Date.now().toString();
                             const res = await fetch(url);
                             this.remoteChartList = await res.json();
                         } catch (e) {
@@ -896,13 +870,15 @@ onmessage = function (e) {
                         }
                     },
                     async importRemoteChart(meta) {
-                        const { name, url, title } = meta;
-                        if (!name || !url || charts[name]) return;
+                        const { name, url, title, path } = meta;
+                        if (!name || (!url && path) || charts[name]) return;
 
                         try {
                             loading.value = true;
                             await nextTick();
-                            const res = await fetch(url);
+                            let resource = url;
+                            if (path) resource = statPath + path;
+                            const res = await fetch(resource);
                             const code = await res.text();
                             this.addChartCode(code);
                         } catch (e) {
@@ -913,6 +889,81 @@ onmessage = function (e) {
                         }
                     }
                 });
+                const dataLoader = reactive({
+                    load: async (getter = async () => { }, desc = null) => {
+                        try {
+                            dataLoader.progress.visible = true;
+                            dataLoader.progress.current = 0;
+                            dataLoader.progress.total = 0;
+                            dataLoader.progress.text = '';
+                            await nextTick();
+                            const added = await getter();
+                            const data = dataMgr.data;
+                            if (!data || !Array.isArray(data.danmakuData)) {
+                                ELEMENT_PLUS.ElMessageBox.alert(
+                                    '初始化数据缺失，无法加载弹幕统计面板。请确认主页面传入了有效数据。',
+                                    '错误',
+                                    { type: 'error' }
+                                );
+                                data.danmakuData = [];
+                            }
+                            danmakuList.original = [...data.danmakuData].sort((a, b) => a.progress - b.progress);
+                            danmakuCount.value.origin = danmakuList.original.length;
+                            await resetFilter();
+                            if (desc) ELEMENT_PLUS.ElMessage.success(`成功新增${desc}弹幕：${added} 条`);
+                        } catch (e) {
+                            ELEMENT_PLUS.ElMessage.error('载入弹幕错误：' + e.message);
+                            console.error(e);
+                        } finally {
+                            dataLoader.progress.visible = false;
+                        }
+                    },
+                    progress: {
+                        visible: false,
+                        current: 0,
+                        total: 0,
+                        text: ''
+                    },
+                    clear: async () => {
+                        dataMgr.clearDmList();
+                        await dataLoader.load();
+                        ELEMENT_PLUS.ElMessage.success('已清除弹幕列表');
+                    },
+                    loadXml: async () => {
+                        await dataLoader.load(async () => { return await dataMgr.getDanmakuXml(); }, ' XML ');
+                    },
+                    loadPb: async () => {
+                        await dataLoader.load(async () => {
+                            return await dataMgr.getDanmakuPb((current, total, segIndex, count) => {
+                                dataLoader.progress.current = current;
+                                dataLoader.progress.total = total;
+                                dataLoader.progress.text = `弹幕片段：第 ${segIndex} 段（${current}/${total}） ${count} 条弹幕`;
+                            });
+                        }, ' Protobuf ');
+                    },
+                    selectedMonth: '',
+                    disabledMonth(date) {
+                        const pub = videoInfo.pubtime;
+                        if (!pub) return false;
+                        const min = new Date(pub * 1000);
+                        const max = new Date();
+                        return date < new Date(min.getFullYear(), min.getMonth()) ||
+                            date >= new Date(max.getFullYear(), max.getMonth() + 1);
+                    },
+                    loadHis: async () => {
+                        if (!dataLoader.selectedMonth) {
+                            ELEMENT_PLUS.ElMessage.warning('请选择月份');
+                            return;
+                        }
+                        await dataLoader.load(async () => {
+                            return await dataMgr.getDanmakuHisPb(dataLoader.selectedMonth, (current, total, date, count) => {
+                                dataLoader.progress.current = current;
+                                dataLoader.progress.total = total;
+                                dataLoader.progress.text = `历史弹幕：${date}（${current}/${total}） ${count} 条弹幕`;
+                            });
+                        }, ` ${dataLoader.selectedMonth} 历史`);
+                    }
+                })
 
                 function registerChartAction(chartName, chartDef) {
                     if (!Array.isArray(chartDef.actions)) return;
@@ -939,27 +990,11 @@ onmessage = function (e) {
                     const sec = String(s % 60).padStart(2, '0');
                     return `${min}:${sec}`;
                 }
-                function formatTime(ts) {
-                    const d = new Date(ts * 1000);
-                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-                }
 
                 function downloadData() {
-                    const data = {
-                        bvid: dataParam.bvid,
-                        p: dataParam.p,
-                        epid: dataParam.epid,
-                        cid: dataParam.cid,
-                        videoData,
-                        episodeData: dataParam.episodeData,
-                        danmakuData: danmakuList.original,
-                        fetchtime: dataParam.fetchtime
-                    }
-                    let bTitle = 'Bilibili';
-                    if (data.bvid) bTitle = data.bvid;
-                    else if (data.epid) bTitle = 'ep' + data.epid;
+                    let bTitle = dmData.info?.id?.replace(/[\\/:*?"<>|]/g, '_') || 'Bilibili';
                     const filename = `${bTitle}.json`;
-                    const jsonString = JSON.stringify(data, null, 2); // null, 2 用于格式化 JSON，使其更易读
+                    const jsonString = JSON.stringify(dmData.data, null, 4);
 
                     // 创建一个包含 JSON 数据的 Blob 对象
                     const blob = new Blob([jsonString], { type: 'application/json' });
@@ -1076,7 +1111,7 @@ onmessage = function (e) {
                                 cancelButtonText: '关闭',
                             }).then(() => {
                                 const link = doc.createElement('a');
-                                link.download = `${videoData.bvid}_danmaku_statistics.png`;
+                                link.download = `${videoInfo.id}_danmaku_statistics.png`;
                                 link.href = blobUrl;
                                 link.click();
                                 URL.revokeObjectURL(blobUrl); // 可选：释放内存
@@ -1170,9 +1205,13 @@ onmessage = function (e) {
                                     params,
                                     data: danmakuList.current,
                                     applySubFilter: (subFilt) => {
-                                        const list = typeof subFilt.filterFn === 'function'
-                                            ? subFilt.filterFn(danmakuList.current)
-                                            : danmakuList.current;
+                                        let list = [];
+                                        if (typeof subFilt.filterJudge === 'function') {
+                                            list = danmakuList.current.filter(d => subFilt.filterJudge(d))
+                                        } else {
+                                            list = danmakuList.current;
+                                            ELEMENT_PLUS.ElMessage.warning('图表缺少筛选判断方法');
+                                        }
                                         return updateDispDanmakus(false, list, { chart, ...subFilt });
                                     },
                                     ELEMENT_PLUS
@@ -1222,9 +1261,10 @@ onmessage = function (e) {
                 async function applyActiveSubFilters() {
                     try {
                         let filtered = danmakuList.filtered;
-                        const activeFilters = subFiltHistory.value.filter(f => f.enabled && typeof f.filterFn === 'function');
+                        const activeFilters = subFiltHistory.value.filter(f => f.enabled && typeof f.filterJudge === 'function');
                         for (const filt of activeFilters) {
-                            filtered = filt.filterFn(filtered);
+                            if (filt.exclude) filtered = filtered.filter(d => !filt.filterJudge(d));
+                            else filtered = filtered.filter(d => filt.filterJudge(d));
                         }
                         danmakuList.current = filtered;
                         await updateDispDanmakus(true);
@@ -1235,7 +1275,11 @@ onmessage = function (e) {
                 }
                 async function commitSubFilter() {
                     if (Object.keys(currentSubFilt.value).length) {
-                        subFiltHistory.value.push({ ...currentSubFilt.value, enabled: true });
+                        subFiltHistory.value.push({
+                            ...currentSubFilt.value,
+                            enabled: true,
+                            exclude: false
+                        });
                     }
                     await applyActiveSubFilters();
                 }
@@ -1273,77 +1317,6 @@ onmessage = function (e) {
                 }
 
                 onMounted(async () => {
-                    if ((!dataParam?.videoData && !dataParam?.episodeData) || !Array.isArray(dataParam?.danmakuData)) {
-                        ELEMENT_PLUS.ElMessageBox.alert(
-                            '初始化数据缺失，无法加载弹幕统计面板。请确认主页面传入了有效数据。',
-                            '错误',
-                            { type: 'error' }
-                        );
-                        dataParam.danmakuData = [];
-                    }
-                    if (dataParam.epid && dataParam.episodeData) {
-                        let ep = null;
-                        let sectionTitle = null;
-                        if (Array.isArray(dataParam.episodeData.episodes)) {
-                            ep = dataParam.episodeData.episodes.find(e => e.ep_id === dataParam.epid || e.id === dataParam.epid);
-                            if (ep) {
-                                sectionTitle = ep.show_title;
-                            }
-                        }
-                        if (!ep && Array.isArray(dataParam.episodeData.section)) {
-                            for (const section of dataParam.episodeData.section) {
-                                ep = section.episodes?.find(e => e.ep_id === dataParam.epid || e.id === dataParam.epid);
-                                if (ep) {
-                                    sectionTitle = section.title + '：' + ep.show_title;
-                                    break;
-                                }
-                            }
-                        }
-                        if (ep) {
-                            Object.assign(videoData, {
-                                bvid: ep.bvid,
-                                cid: ep.cid,
-                                epid: ep.ep_id || ep.id,
-                                section_title: sectionTitle,
-                                title: ep.share_copy || ep.show_title || ep.long_title || ep.title,
-                                duration: ep.duration / 1000,
-                                pic: ep.cover,
-                                owner: {
-                                    mid: dataParam.episodeData.up_info?.mid,
-                                    name: dataParam.episodeData.up_info?.uname,
-                                    face: dataParam.episodeData.up_info?.avatar
-                                },
-                                pubdate: ep.pub_time,
-                                stat: {
-                                    view: ep.stat?.play || dataParam.episodeData.stat.views,
-                                    danmaku: ep.stat?.danmakus || dataParam.episodeData.stat.danmakus,
-                                    reply: ep.stat?.reply || dataParam.episodeData.stat.reply,
-                                    coin: ep.stat?.coin || dataParam.episodeData.stat.coins,
-                                    like: ep.stat?.likes || dataParam.episodeData.stat.likes,
-                                }
-                            });
-                        }
-                    }
-                    videoData.fetchtime = dataParam?.fetchtime || Math.floor(Date.now() / 1000);
-                    if (videoData?.pic?.startsWith('http:')) {
-                        videoData.pic = videoData.pic.replace(/^http:/, 'https:');
-                    }
-                    if (videoData?.owner?.face?.startsWith('http:')) {
-                        videoData.owner.face = videoData.owner.face.replace(/^http:/, 'https:');
-                    }
-                    if (videoData.pages) {
-                        if (!isNaN(dataParam.p) && videoData.pages[dataParam.p - 1]) {
-                            videoData.page_cur = videoData.pages[dataParam.p - 1];
-                            videoData.duration = videoData.page_cur.duration;
-                        } else if (videoData.pages[0]) {
-                            videoData.duration = videoData.pages[0].duration;
-                        }
-                    }
-                    danmakuList.original = [...dataParam.danmakuData].sort((a, b) => a.progress - b.progress);
-                    danmakuList.filtered = [...danmakuList.original];
-                    danmakuList.current = [...danmakuList.filtered];
-                    danmakuCount.value.origin = danmakuList.original.length;
-
                     for (const [chartName, chartDef] of Object.entries(charts)) {
                         registerChartAction(chartName, chartDef);
                     }
@@ -1363,7 +1336,7 @@ onmessage = function (e) {
                     chartConfig.chartsVisible = DmstatStorage.get('chartsVisible', Object.keys(charts));
                     chartConfig.loadRemoteList();
 
-                    await updateDispDanmakus(true);
+                    await dataLoader.load();
                 });
                 return {
                     h,
@@ -1372,11 +1345,12 @@ onmessage = function (e) {
                     filterText,
                     applyFilter,
                     resetFilter,
-                    videoData,
+                    videoInfo,
                     danmakuCount,
                     currentFilt,
                     currentSubFilt,
                     subFiltHistory,
+                    dataLoader,
                     loading,
                     isTableVisible,
                     isTableAutoH,
@@ -1389,7 +1363,6 @@ onmessage = function (e) {
                     commitSubFilter,
                     applyActiveSubFilters,
                     handleRowClick,
-                    formatTime,
                     shareImage,
                     downloadData
                 };
@@ -1400,42 +1373,49 @@ onmessage = function (e) {
     <el-aside width="50%" style="overflow-y: auto;">
         <div style="min-width: 400px;">
             <div id="wrapper-title" style="text-align: left;">
-                <h3>{{ videoData.title || '加载中...' }}
-                    <image-popover-link :imgSrc="videoData.pic" alt="视频封面" :width="360" :height="180">
-                        <el-icon style="font-size: 20px;"><el-icon-picture-filled /></el-icon>
-                    </image-popover-link>
-                </h3>
-                <el-tag type="success" v-if="videoData.page_cur">
-                    第 {{ videoData.page_cur.page }} P：{{ videoData.page_cur.part }}
-                </el-tag>
-                <el-tag type="success" v-if="videoData.section_title">
-                    {{ videoData.section_title }}
-                </el-tag>
-
-                <p style="margin: 10px;">
-                    <template v-if="videoData.epid">
-                        <info-line label="EPID：" :value="videoData.epid"
-                            :href="'https://www.bilibili.com/bangumi/play/ep' + videoData.epid" /><br />
-                    </template>
-                    <template v-else>
-                        <info-line v-if="videoData.bvid" label="BVID：" :value="videoData.bvid"
-                            :href="'https://www.bilibili.com/video/' + videoData.bvid" /><br />
-                    </template>
-                    <info-line v-if="videoData.owner" label="UP主：" :value="videoData.owner.name"
-                        :href="'https://space.bilibili.com/' + videoData.owner.mid" />
-                    <image-popover-link :imgSrc="videoData.owner?.face" alt="UP主头像" :width="100" :height="100"
-                        :rounded="true" linkStyle="margin-left: 8px; vertical-align: -2px;">
-                        <el-icon style="font-size: inherit;"><el-icon-user /></el-icon>
-                    </image-popover-link><br />
-                    <info-line label="发布时间：" :value="videoData.pubdate ? formatTime(videoData.pubdate) : '-'" /><br />
-                    <info-line label="截止" :value="videoData.fetchtime ? formatTime(videoData.fetchtime) : '-'" />
-                    <info-line type="primary" label="播放量：" :value="videoData.stat?.view || '-'" /><br />
-                    <info-line type="primary" label="总弹幕数：" suffix="，" :value="videoData.stat?.danmaku || '-'" />
-                    <info-line v-if="videoData.owner" label="载入实时弹幕" suffix="条" :value="danmakuCount.origin"
-                        :href="'https://api.bilibili.com/x/v1/dm/list.so?oid=' + videoData.cid" />
-                    <action-tag type="primary" @click="downloadData" title="下载所有数据">
-                        <el-icon style="font-size: 12px;"><el-icon-download /></el-icon></action-tag>
-                </p>
+                <video-info-panel :videoInfo="videoInfo" />
+                <el-collapse expand-icon-position="left">
+                    <el-collapse-item name="1"
+                        :title="' 已载入弹幕 ' + (danmakuCount.origin?.toLocaleString() || '-') + ' 条'">
+                        <el-space v-if="panelInfo.type == 0" :size="12" wrap direction="vertical" alignment="flex-start">
+                            <el-alert type="warning" title="请不要短时间内频繁载入，否则可能触发B站风控。" show-icon />
+                            <el-alert type="info">
+                                已默认载入 XML 实时弹幕。B站使用 ProtoBuf 实时弹幕，通常比 XML 弹幕更全。
+                            </el-alert>
+                            <el-space wrap>
+                                <el-button type="danger" size="small" :disabled="dataLoader.progress.visible"
+                                    @click="dataLoader.clear">清除弹幕</el-button>
+                                <el-button type="primary" size="small" :disabled="dataLoader.progress.visible"
+                                    @click="dataLoader.loadXml">载入 XML 实时弹幕</el-button>
+                                <el-button type="primary" size="small" :disabled="dataLoader.progress.visible"
+                                    @click="dataLoader.loadPb">载入 ProtoBuf 实时弹幕</el-button>
+                            </el-space>
+                            <el-space wrap>
+                                <el-date-picker v-model="dataLoader.selectedMonth" type="month" size="small"
+                                    placeholder="选择月份" value-format="YYYY-MM"
+                                    :disabled-date="dataLoader.disabledMonth" />
+                                <el-button type="success" size="small" :disabled="dataLoader.progress.visible"
+                                    style="margin-left: 10px;" @click="dataLoader.loadHis">
+                                    载入历史弹幕
+                                </el-button>
+                            </el-space>
+                            <el-space wrap :size="12">
+                                <el-button type="primary" size="small" @click="downloadData">
+                                    <el-icon style="font-size: 12px;"><el-icon-download /></el-icon> 下载数据
+                                </el-button>
+                                <div style="width: 120px;">
+                                    <el-progress v-if="dataLoader.progress.visible"
+                                        :percentage="Math.floor((dataLoader.progress.current / dataLoader.progress.total) * 100) || 0"
+                                        :text-inside="true" :stroke-width="18">
+                                    </el-progress>
+                                </div>
+                                <el-text v-if="dataLoader.progress.visible" size="small" type="info">
+                                    {{ dataLoader.progress.text }}
+                                </el-text>
+                            </el-space>
+                        </el-space>
+                    </el-collapse-item>
+                </el-collapse>
                 <p style="
                     background-color: #f4faff;
                     border-left: 4px solid #409eff;
@@ -1444,18 +1424,22 @@ onmessage = function (e) {
                     color: #333;
                 ">
                     <template v-if="currentFilt">
-                        <info-line :label="excludeFilter ? '排除：' : '筛选：'" :value="currentFilt" />
+                        筛选
+                        <el-tag type="info" size="small" style="vertical-align: baseline;">{{ currentFilt }}</el-tag>
                         <el-checkbox v-model="excludeFilter" @change="applyFilter"
                             style="margin-left: 4px; vertical-align: middle;">排除模式</el-checkbox><br />
                     </template>
                     <template v-if="subFiltHistory.length" style="margin-top: 10px;">
-                        <span v-for="(item, idx) in subFiltHistory" :key="idx" style="margin-right: 6px;">
-                            <el-checkbox v-model="item.enabled" style="margin-right: 4px;"
-                                @change="applyActiveSubFilters" />
-                            <component :is="item.labelVNode(h)" />
-                            <action-tag @click="() => { subFiltHistory.splice(idx, 1); applyActiveSubFilters(); }"
-                                title="清除历史子筛选">×</action-tag><br />
-                        </span>
+                        <el-space direction="vertical" :size="2" alignment="flex-start" style="width: 100%;">
+                            <el-space v-for="(item, idx) in subFiltHistory" :key="idx"
+                                :spacer="h('span', { style: 'color: #666;' }, '|')" wrap>
+                                <el-checkbox v-model="item.enabled" @change="applyActiveSubFilters" />
+                                <component :is="item.labelVNode(h)" style="min-width: 200px;" />
+                                <el-checkbox v-model="item.exclude" @change="applyActiveSubFilters" label="排除" />
+                                <action-tag @click="() => { subFiltHistory.splice(idx, 1); applyActiveSubFilters(); }"
+                                    title="清除筛选">×</action-tag>
+                            </el-space>
+                        </el-space>
                     </template>
                     结果：共有 {{ danmakuCount.filtered }} 条弹幕<br />
                     <template v-if="currentSubFilt.labelVNode">
@@ -1834,15 +1818,17 @@ onmessage = function (e) {
             openPanel(async (iframe) => {
                 if (isUserPage) {
                     const mid = location.href.match(/\/(\d+)/)?.[1];
-                    const userData = await dmUtils.getUserCardData(mid);
+                    const userData = await BiliDataManager.api.getUserCard(mid);
                     return initUserIframeApp(iframe, userData);
                 } else {
-                    await dmUtils.fetchAllData(location.href);
-                    return initIframeApp(iframe, dmUtils, {
+                    dmData = new BiliDataManager();
+                    await dmData.getData(location.href);
+                    await dmData.getDanmakuXml();
+                    return initIframeApp(iframe, dmData, {
                         type: 0, newPanel: function (type) {
                             if (type == 0) {
                                 openPanelInNewTab();
-                                dmUtils.logTag('[主页面] 新建子页面');
+                                console.log('[主页面] 新建子页面');
                             }
                         }
                     });
@@ -1907,9 +1893,7 @@ onmessage = function (e) {
     }
 
     function generatePanelBlob(panelInfoText) {
-        let bTitle = 'Bilibili';
-        if (dmUtils.bvid) bTitle = dmUtils.bvid;
-        else if (dmUtils.epid) bTitle = 'ep' + dmUtils.epid;
+        let bTitle = dmData?.info?.id?.replace(/[\\/:*?"<>|]/g, '_') || 'Bilibili';
         const htmlContent = `
         <!DOCTYPE html>
         <html lang="zh">
@@ -1928,10 +1912,9 @@ onmessage = function (e) {
         <script>
             ${ResourceLoader.toString()}
             ${initIframeApp.toString()}
-            ${BiliDanmakuUtils.toString()}
             ${BiliMidHashConverter.toString()}
-            const dmUtils = new BiliDanmakuUtils();
-            Object.assign(dmUtils, ${JSON.stringify(dmUtils)});
+            const dmData = {};
+            Object.assign(dmData, ${JSON.stringify(dmData)});
             const iframe = document.createElement('iframe');
             iframe.id = 'danmaku-stat-iframe';
             iframe.style.position = 'fixed';
@@ -1945,7 +1928,7 @@ onmessage = function (e) {
             iframe.style.overflow = 'hidden';
             iframe.style.borderRadius = '8px';
             iframe.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
-            iframe.onload = () => initIframeApp(iframe, dmUtils, ${panelInfoText});
+            iframe.onload = () => initIframeApp(iframe, dmData, ${panelInfoText});
             document.body.appendChild(iframe);
         </script>
         </body>
@@ -1961,7 +1944,7 @@ onmessage = function (e) {
             newPanel: function (type) {
                 if (type == 1) {
                     if (window.opener) {
-                        dmUtils.logTag('[子页面] 请求保存页面');
+                        console.log('[子页面] 请求保存页面');
                         window.opener.postMessage({ type: 'DMSTATS_REQUEST_SAFE' }, '*');
                     }
                 }
@@ -1975,13 +1958,11 @@ onmessage = function (e) {
     }
     // 保存弹幕统计面板
     function savePanel() {
-        let bTitle = 'Bilibili';
-        if (dmUtils.bvid) bTitle = dmUtils.bvid;
-        else if (dmUtils.epid) bTitle = 'ep' + dmUtils.epid;
+        let bTitle = dmData?.info?.id?.replace(/[\\/:*?"<>|]/g, '_') || 'Bilibili';
         const blobUrl = generatePanelBlob(`{
             type: 2,
             newPanel: function (type) {
-                dmUtils.logTag('未定义操作');
+                console.log('未定义操作');
             }
         }`);
         const link = document.createElement('a');
@@ -1993,20 +1974,20 @@ onmessage = function (e) {
         URL.revokeObjectURL(blobUrl);
     }
 
-    const urlOfUtils = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/BiliDanmakuUtils.js';
-    const urlOfConverter = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/BiliMidHashConverter.js';
-    const { BiliDanmakuUtils } = await import(urlOfUtils);
-    const { BiliMidHashConverter } = await import(urlOfConverter);
-    const dmUtils = new BiliDanmakuUtils();
-    dmUtils.logStyle.tag = 'Danmaku Statistic';
+    const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.0.0/';
+    const downPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bilibili-danmaku-download@1.6.1/'
+    const { BiliMidHashConverter } = await import(statPath + 'docs/BiliMidHashConverter.js');
+    const { createBiliDataManagerImport } = await import(downPath + 'tampermonkey/BiliDataManager.js');
+    const BiliDataManager = await createBiliDataManagerImport(GM_xmlhttpRequest, 'Danmaku Statistic');
+    let dmData = {};
 
     // 监听新标签页消息
     window.addEventListener('message', (event) => {
         if (event.data?.type === 'DMSTATS_REQUEST_DATA') {
-            dmUtils.logTag('[主页面] 收到数据请求');
-            event.source.postMessage(dmUtils, '*');
+            console.log('[主页面] 收到数据请求');
+            event.source.postMessage(dmData, '*');
         } else if (event.data?.type === 'DMSTATS_REQUEST_SAFE') {
-            dmUtils.logTag('[主页面] 收到保存请求');
+            console.log('[主页面] 收到保存请求');
             savePanel();
         }
     });
