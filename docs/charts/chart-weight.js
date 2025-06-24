@@ -1,11 +1,11 @@
 ({
     name: 'weight',
     title: '弹幕屏蔽等级分布',
-    refresh: true,
+    expandedH: false,
     render(data) {
         const levelCount = {};
         data.forEach(d => {
-            const level = d.weight ?? 0;
+            const level = d.weight;
             levelCount[level] = (levelCount[level] || 0) + 1;
         });
 
@@ -25,8 +25,8 @@
         const level = Number(params.name);
         await applySubFilter({
             value: level,
-            filterFn: data => (data || []).filter(d => (d.weight ?? 0) === level),
-            filterJudge: d => (d.weight ?? 0) === level,
+            filterFn: data => (data || []).filter(d => (d.weight) === level),
+            filterJudge: d => (d.weight) === level,
             labelVNode: h => h('span', [
                 '屏蔽等级：',
                 h(ELEMENT_PLUS.ElTag, { type: 'info', size: 'small', style: 'vertical-align: baseline' }, String(level))
