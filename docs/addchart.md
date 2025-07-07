@@ -64,7 +64,7 @@
         const selectedDigit = params.name;
         await applySubFilter({
             value: selectedDigit,
-            filterFn: (data) => data.filter(d => (d.content.match(/\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit)),
+            filterJudge: d => (d.content.match(/\d+/g) || []).some(n => n.replace(/^0+/, '')[0] === selectedDigit),
             labelVNode: (h) => h('span', [
                 '首位数字为 ',
                 h(ELEMENT_PLUS.ElTag, {
@@ -105,14 +105,13 @@
 ```js
 await applySubFilter({
     value: any,                  // （可选）当前筛选值
-    filterFn: (data) => data[],  // （必须）对当前弹幕列表 data 进行筛选的函数，返回筛选后的新列表
+    filterJudge: d => true,      // （必须）传入弹幕
     labelVNode: (h) => VNode     // （必须）筛选说明 UI 标签
 });
 ```
 
-data弹幕数组结构如下，参考[xml格式结构](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/danmaku/danmaku_xml.md#xml%E6%A0%BC%E5%BC%8F%E7%BB%93%E6%9E%84)
+弹幕结构如下，参考[protobuf弹幕proto定义](https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/danmaku/danmaku_proto.md)
 ```js
-[
 {
   progress: 93856,             // 弹幕出现在视频中的时间，单位毫秒
   mode: 1,                     // 弹幕模式（底部 / 顶部等）
@@ -121,11 +120,10 @@ data弹幕数组结构如下，参考[xml格式结构](https://github.com/Social
   ctime: 1746982858,           // 弹幕发送时间（UNIX 时间戳，单位秒）
   pool: 0,                     // 弹幕池类型
   midHash: '6c2b67a9',         // 用户哈希（经过 CRC32 混淆的 mid）
-  dmid: '206847964361106457',  // 弹幕唯一 ID
+  id: 106847964361106457,      // 弹幕唯一 ID（有可能超出number范围，使用idStr更准）
+  idStr: '106847964361106457', // 弹幕唯一 ID 字符串
   weight: 2,                   // 弹幕屏蔽等级
   content: '2333333哈哈哈'     // 弹幕文本内容
-},
-...
-]
+}
 ```
 不会写就让AI写好了
