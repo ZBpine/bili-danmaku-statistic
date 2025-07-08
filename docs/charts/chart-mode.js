@@ -5,8 +5,8 @@
     render(data) {
         const labelMap = {
             1: '普通弹幕',
-            2: '普通弹幕2',
-            3: '普通弹幕3',
+            2: '普通弹幕',
+            3: '普通弹幕',
             4: '底部弹幕',
             5: '顶部弹幕',
             6: '逆向弹幕',
@@ -22,7 +22,7 @@
         });
 
         const keys = Object.keys(countMap);
-        const xData = keys.map(k => labelMap[k] || `类型:${k}`);
+        const xData = keys.map(k => `${k}:${labelMap[k] || '未知类型'}`);
         const yData = keys.map(k => countMap[k]);
 
         this._typeIndexMap = Object.fromEntries(xData.map((label, i) => [label, Number(keys[i])]));
