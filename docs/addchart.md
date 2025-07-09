@@ -84,7 +84,29 @@
 {
     name: 'customChart', // 唯一键名
     title: '示例图表', // 标题
+    refresh: true,   // 是否支持刷新图表（可选）
     expandedH: true 或 false, // 是否支持高度展开（可选）
+    actions: [               // 图表操作按钮（可选）
+        {
+            key: 'actionKey',
+            icon: '✨',
+            title: '操作',
+            method: 'actionMethod'  // 图表操作方法名
+        }
+    ],
+    actionMethod: { },               // 图表操作方法实现
+    menuItems:[{                      // 菜单项（可选）
+        getName: (item) => item.midHash, // 名称
+        onSelect: (item) => { }          // 点击方法
+    }],
+    getMenuItems(){                     // 与menuItems作用相同
+        return [{
+            getName: (item) => item.midHash,
+            onSelect: async (item) => { 
+                this.method(item);      // 便于调用this
+            }
+        }];
+    },
     render(data) {
         // 图表绘制逻辑
         // data 是当前筛选后的弹幕数组
@@ -123,6 +145,7 @@ await applySubFilter({
   id: 106847964361106457,      // 弹幕唯一 ID（有可能超出number范围，使用idStr更准）
   idStr: '106847964361106457', // 弹幕唯一 ID 字符串
   weight: 2,                   // 弹幕屏蔽等级
+  attr: 1070080,               // 弹幕属性（XML弹幕没有这个）
   content: '2333333哈哈哈'     // 弹幕文本内容
 }
 ```

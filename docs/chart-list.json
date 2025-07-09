@@ -28,5 +28,11 @@
         "title": "弹幕类型分布",
         "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-mode.js",
         "path": "docs/charts/chart-mode.js"
+    },
+    {
+        "name": "attr",
+        "title": "弹幕属性分布",
+        "url": "https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic/docs/charts/chart-attr.js",
+        "path": "docs/charts/chart-attr.js"
     }
 ]

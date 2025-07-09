@@ -1,15 +1,16 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      2.0.1
+// @version      2.1.0
 // @description  获取B站弹幕数据，并生成统计页面。
 // @author       ZBpine
-// @icon         https://i0.hdslb.com/bfs/static/jinkela/long/images/favicon.ico
+// @icon         https://www.bilibili.com/favicon.ico
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/list/watchlater*
 // @match        https://www.bilibili.com/bangumi/play/ep*
 // @match        https://space.bilibili.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      api.bilibili.com
 // @license      MIT
 // @run-at       document-end
@@ -44,7 +45,7 @@
             return el;
         }
         addScript(src) { return new Promise(resolve => { this.addEl('script', { src, onload: resolve }); }); }
-        addCss(href) { this.addEl('link', { rel: 'stylesheet', href }); }
+        addCss(href) { return new Promise(resolve => { this.addEl('link', { rel: 'stylesheet', href, onload: resolve }); }); }
         addStyle(cssText) { this.addEl('style', { textContent: cssText }); }
     }
     // iframe里初始化统计面板应用
@@ -54,16 +55,23 @@
 
         // 引入外部库
         const loader = new ResourceLoader(doc);
-        loader.addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css');
-        await loader.addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js');
-        await loader.addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
-        await loader.addScript('https://cdn.jsdelivr.net/npm/@element-plus/icons-vue/dist/index.iife.min.js');
-        await loader.addScript('https://cdn.jsdelivr.net/npm/echarts@5');
-        await loader.addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js');
-        await loader.addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
-        await loader.addScript('https://cdn.jsdelivr.net/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js');
-        const createVideoInfoPanel = (await import(statPath + 'docs/VideoInfoPanel.js')).default;
-        const createDanmukuTable = (await import(statPath + 'docs/DanmukuTable.js')).default;
+        await Promise.all([
+            loader.addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css'),
+            loader.addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js'),
+            loader.addScript('https://cdn.jsdelivr.net/npm/echarts@5')
+        ]);
+        await Promise.all([
+            loader.addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js'),
+            loader.addScript('https://cdn.jsdelivr.net/npm/@element-plus/icons-vue/dist/index.iife.min.js'),
+            loader.addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js'),
+            loader.addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js'),
+            loader.addScript('https://cdn.jsdelivr.net/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js')
+        ]);
+        const [createVideoInfoPanel, createDanmukuTable] = await Promise.all([
+            import(statPath + 'docs/VideoInfoPanel.js'),
+            import(statPath + 'docs/DanmukuTable.js')
+        ]).then(([v, d]) => [v.default, d.default]);
+
         const VideoInfoPanel = createVideoInfoPanel(win.Vue, win.ElementPlus);
         const DanmukuTable = createDanmukuTable(win.Vue, win.ElementPlus);
 
@@ -100,7 +108,6 @@
                 });
 
                 const converter = new BiliMidHashConverter();
-                const displayedDanmakus = ref([]);
                 const excludeFilter = ref(false);
                 const filterText = ref('^(哈|呵|h|ha|H|HA|233+)+$');
                 const currentFilt = ref('');
@@ -110,9 +117,22 @@
                 const videoInfo = reactive(dataMgr.info || {});
                 const isTableVisible = ref(true);
                 const isTableAutoH = ref(false);
-                const scrollToTime = ref(null);
                 const loading = ref(true);
                 const panelInfo = ref(panelInfoParam);
+                const danmakuTableItems = ref([]);
+                const danmukuTableRef = ref(null);
+                const danmakuTableMenus = reactive([
+                    {
+                        getName: (item) => '点赞数：' + (Number.isInteger(item.likes) ?
+                            item.likes : panelInfo.value.type === 0 ? "点击获取" : '-'),
+                        onSelect: async (item) => {
+                            try {
+                                const data = await dataMgr.constructor.api.getDanmakuLikes(dataMgr.info.cid, [item.idStr]);
+                                item.likes = data[item.idStr]?.likes ?? 0;
+                            } catch (e) { console.warn(e); }
+                        }
+                    }
+                ]);
                 const danmakuList = {
                     original: [],   //原始
                     filtered: [],   //正则筛选后
@@ -157,6 +177,19 @@
                                 method: 'locate'
                             }
                         ],
+                        getMenuItems() {
+                            return [
+                                {
+                                    getName: (item) => '发送者：' + item.midHash,
+                                    onSelect: (item) => {
+                                        const el = this.getElement();
+                                        if (!el) return;
+                                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                        this.locateInChart(item.midHash);
+                                    }
+                                }
+                            ];
+                        },
                         render(data) {
                             const countMap = {};
                             for (const d of data) {
@@ -531,7 +564,16 @@ onmessage = function (e) {
                             const sec = params.value[0];
                             if (!this.rangeMode) {
                                 // 默认模式：直接跳转
-                                scrollToTime.value = sec * 1000;
+                                const target = sec * 1000;
+                                const table = this.ctx.danmukuTableRef.value;
+                                const items = this.ctx.danmakuTableItems.value;
+                                if (!items.length) return;
+                                const idx = items.reduce((closestIdx, item, i) => {
+                                    const currentDiff = Math.abs(item.progress - target);
+                                    const closestDiff = Math.abs(items[closestIdx]?.progress - target);
+                                    return currentDiff < closestDiff ? i : closestIdx;
+                                }, 0);
+                                table.scrollToRow(idx);
                                 return;
                             }
 
@@ -831,18 +873,7 @@ onmessage = function (e) {
                             console.warn('chartName 必须为字符串，chartDef 必须为对象');
                             return;
                         }
-                        chartDef.ctx = {
-                            ELEMENT_PLUS,
-                            ECHARTS,
-                            chartsActions,
-                            displayedDanmakus,
-                            danmakuCount,
-                            danmakuList,
-                            videoInfo,
-                            registerChartAction,
-                            formatProgress
-                        }
-                        registerChartAction(chartName, chartDef);
+                        this.initChart(chartName, chartDef);
                         charts[chartName] = { instance: null, ...chartDef };
                         if (visible && !this.chartsVisible.includes(chartName)) {
                             this.chartsVisible.push(chartName);
@@ -859,9 +890,53 @@ onmessage = function (e) {
                             ELEMENT_PLUS.ElMessage.error('图表代码错误');
                         }
                     },
+                    initChart(chartName, chartDef) {
+                        const registerChartAction = (chartName, chartDef) => {
+                            if (!Array.isArray(chartDef.actions)) return;
+                            chartDef.actions.forEach(({ key, icon, title, method }) => {
+                                if (!key || !method) return;
+                                chartsActions[`${chartName}:${key}`] = {
+                                    icon,
+                                    title,
+                                    apply: chart => chart === chartName,
+                                    handler: async chart => {
+                                        try {
+                                            await charts[chart][method]();
+                                        } catch (e) {
+                                            console.error(`[chartsActions] ${chart}.${method} 执行失败`, e);
+                                        }
+                                    }
+                                };
+                            });
+                        };
+                        const registerChartMenuItems = (chartName, chartDef) => {
+                            if (Array.isArray(chartDef.menuItems)) {
+                                danmakuTableMenus.push(...chartDef.menuItems);
+                            }
+                            if (chartDef.getMenuItems && typeof chartDef.getMenuItems == 'function') {
+                                const menuItems = chartDef.getMenuItems();
+                                danmakuTableMenus.push(...menuItems);
+                            }
+                        };
+                        chartDef.ctx = {
+                            ELEMENT_PLUS,
+                            ECHARTS,
+                            chartsActions,
+                            danmakuTableItems,
+                            danmakuCount,
+                            danmakuList,
+                            danmukuTableRef,
+                            videoInfo,
+                            dataMgr,
+                            formatProgress
+                        }
+                        chartDef.getElement = () => doc.getElementById('chart-' + chartName);
+                        registerChartAction(chartName, chartDef);
+                        registerChartMenuItems(chartName, chartDef);
+                    },
                     async loadRemoteList() {
                         try {
-                            const url = statPath + 'docs/chart-list.json?t=' + Date.now().toString();
+                            const url = statPath + 'docs/chart-list.json';
                             const res = await fetch(url);
                             this.remoteChartList = await res.json();
                         } catch (e) {
@@ -963,25 +1038,6 @@ onmessage = function (e) {
                         }, ` ${dataLoader.selectedMonth} 历史`);
                     }
                 })
-
-                function registerChartAction(chartName, chartDef) {
-                    if (!Array.isArray(chartDef.actions)) return;
-                    chartDef.actions.forEach(({ key, icon, title, method }) => {
-                        if (!key || !method) return;
-                        chartsActions[`${chartName}:${key}`] = {
-                            icon,
-                            title,
-                            apply: chart => chart === chartName,
-                            handler: async chart => {
-                                try {
-                                    await charts[chart][method]();
-                                } catch (e) {
-                                    console.error(`[chartsActions] ${chart}.${method} 执行失败`, e);
-                                }
-                            }
-                        };
-                    });
-                }
 
                 function formatProgress(ms) {
                     const s = Math.floor(ms / 1000);
@@ -1174,21 +1230,6 @@ onmessage = function (e) {
                         });
                     });
                 }
-                function handleRowClick(row) {
-                    let el = doc.getElementById('wrapper-chart');
-                    if (!el) return;
-                    while (el && el !== doc.body) {
-                        //寻找可以滚动的父级元素
-                        const overflowY = getComputedStyle(el).overflowY;
-                        const canScroll = overflowY === 'scroll' || overflowY === 'auto';
-                        if (canScroll && el.scrollHeight > el.clientHeight) {
-                            el.scrollTo({ top: 0, behavior: 'smooth' });
-                            break;
-                        }
-                        el = el.parentElement;
-                    }
-                    charts.user.locateInChart(row.midHash);
-                }
 
                 async function renderChart(chart) {
                     const el = doc.getElementById('chart-' + chart);
@@ -1241,7 +1282,7 @@ onmessage = function (e) {
                         if (typeof panelInfo.value?.updateCallback === 'function') {
                             panelInfo.value.updateCallback(danmakuList.current);
                         }
-                        displayedDanmakus.value = data;
+                        danmakuTableItems.value = data;
                         currentSubFilt.value = subFilt;
                         danmakuCount.value.filtered = danmakuList.current.length;
                         if (ifchart) {
@@ -1317,12 +1358,8 @@ onmessage = function (e) {
 
                 onMounted(async () => {
                     for (const [chartName, chartDef] of Object.entries(charts)) {
-                        registerChartAction(chartName, chartDef);
+                        chartConfig.initChart(chartName, chartDef);
                     }
-                    window.addCustomChart = function (chartName, chartDef) {
-                        chartConfig.addChartDef(chartName, chartDef);
-                        console.log(`✅ 已添加图表 "${chartDef.title || chartName}"`);
-                    };
                     const customCharts = DmstatStorage.get('customCharts', {});
                     for (const [name, code] of Object.entries(customCharts)) {
                         try {
@@ -1339,7 +1376,7 @@ onmessage = function (e) {
                 });
                 return {
                     h,
-                    displayedDanmakus,
+                    danmakuTableItems,
                     excludeFilter,
                     filterText,
                     applyFilter,
@@ -1353,7 +1390,6 @@ onmessage = function (e) {
                     loading,
                     isTableVisible,
                     isTableAutoH,
-                    scrollToTime,
                     panelInfo,
                     chartsActions,
                     chartHover,
@@ -1361,7 +1397,8 @@ onmessage = function (e) {
                     clearSubFilter,
                     commitSubFilter,
                     applyActiveSubFilters,
-                    handleRowClick,
+                    danmakuTableMenus,
+                    danmukuTableRef,
                     shareImage,
                     downloadData
                 };
@@ -1376,7 +1413,8 @@ onmessage = function (e) {
                 <el-collapse expand-icon-position="left">
                     <el-collapse-item name="1"
                         :title="' 已载入弹幕 ' + (danmakuCount.origin?.toLocaleString() || '-') + ' 条'">
-                        <el-space v-if="panelInfo.type == 0" :size="12" wrap direction="vertical" alignment="flex-start">
+                        <el-space v-if="panelInfo.type == 0" :size="12" wrap direction="vertical"
+                            alignment="flex-start">
                             <el-alert type="warning" title="请不要短时间内频繁载入，否则可能触发B站风控。" show-icon />
                             <el-alert type="info">
                                 已默认载入 XML 实时弹幕。B站使用 ProtoBuf 实时弹幕，通常比 XML 弹幕更全。
@@ -1443,7 +1481,7 @@ onmessage = function (e) {
                     结果：共有 {{ danmakuCount.filtered }} 条弹幕<br />
                     <template v-if="currentSubFilt.labelVNode">
                         <component :is="currentSubFilt.labelVNode(h)" />
-                        弹幕共 {{ displayedDanmakus.length }} 条
+                        弹幕共 {{ danmakuTableItems.length }} 条
                         <action-tag @click="clearSubFilter" title="清除子筛选">×</action-tag>
                         <action-tag type="success" :onClick="commitSubFilter" title="提交子筛选结果作为新的数据源">✔</action-tag>
                     </template>
@@ -1466,12 +1504,15 @@ onmessage = function (e) {
                         弹幕列表
                     </span>
 
-                    <el-popover placement="bottom" width="160" trigger="click" v-if="displayedDanmakus.length < 100">
+                    <el-popover placement="bottom" width="160" trigger="click" v-if="danmakuTableItems.length < 100">
                         <template v-slot:reference>
                             <el-button text style="margin-right: 20px;" circle @click.stop />
                         </template>
                         <div style="padding: 4px 8px;">
-                            <el-switch v-model="isTableAutoH" active-text="自动高度" inactive-text="有限高度" />
+                            <el-radio-group v-model="isTableAutoH">
+                                <el-radio-button :value="false">自动高度</el-radio-button>
+                                <el-radio-button :value="true">有限高度</el-radio-button>
+                            </el-radio-group>
                         </div>
                     </el-popover>
                     <span style="font-size: 12px; color: #666;">
@@ -1479,8 +1520,8 @@ onmessage = function (e) {
                     </span>
                 </div>
                 <el-collapse-transition>
-                    <danmuku-table v-show="isTableVisible" :items="displayedDanmakus" :virtual-threshold="800"
-                        :scroll-to-time="scrollToTime" @row-click="handleRowClick" />
+                    <danmuku-table ref="danmukuTableRef" v-show="isTableVisible" :virtual-threshold="800"
+                        :items="danmakuTableItems" :menu-items="danmakuTableMenus" />
                 </el-collapse-transition>
             </div>
         </div>
@@ -1497,10 +1538,10 @@ onmessage = function (e) {
                     style="flex: 1 1 200px; min-width: 150px;"></el-input>
                 <span></span>
                 <el-button @click="applyFilter"
-                    :type="displayedDanmakus.length === danmakuCount.origin ? 'warning' : 'default'">筛选</el-button>
+                    :type="danmakuTableItems.length === danmakuCount.origin ? 'warning' : 'default'">筛选</el-button>
                 <span></span>
                 <el-button @click="resetFilter"
-                    :type="displayedDanmakus.length === danmakuCount.origin ? 'default' : 'warning'">取消筛选</el-button>
+                    :type="danmakuTableItems.length === danmakuCount.origin ? 'default' : 'warning'">取消筛选</el-button>
                 <span></span>
                 <el-button @click="shareImage" title="分享统计结果" circle>
                     <svg t="1746120386170" class="icon" viewBox="0 0 1024 1024" version="1.1"
@@ -1636,8 +1677,10 @@ onmessage = function (e) {
         const win = iframe.contentWindow;
 
         const loader = new ResourceLoader(doc);
-        loader.addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css');
-        await loader.addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js');
+        await Promise.all([
+            loader.addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css'),
+            loader.addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js')
+        ]);
         await loader.addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
 
         const appRoot = doc.createElement('div');
@@ -1820,7 +1863,6 @@ onmessage = function (e) {
                     const userData = await BiliDataManager.api.getUserCard(mid);
                     return initUserIframeApp(iframe, userData);
                 } else {
-                    dmData = new BiliDataManager();
                     await dmData.getData(location.href);
                     await dmData.getDanmakuXml();
                     return initIframeApp(iframe, dmData, {
@@ -1975,11 +2017,13 @@ onmessage = function (e) {
     }
 
     const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.0.1/';
-    const downPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bilibili-danmaku-download@1.6.1/'
+    const downPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bilibili-danmaku-download@1.6.1.5/'
     const { BiliMidHashConverter } = await import(statPath + 'docs/BiliMidHashConverter.js');
     const { createBiliDataManagerImport } = await import(downPath + 'tampermonkey/BiliDataManager.js');
-    const BiliDataManager = await createBiliDataManagerImport(GM_xmlhttpRequest, 'Danmaku Statistic');
-    let dmData = {};
+    const BiliDataManager = await createBiliDataManagerImport(GM_xmlhttpRequest, '');
+    let dmData = new BiliDataManager();
+    unsafeWindow.BiliDataManager = BiliDataManager;
+    unsafeWindow.dmData = dmData;
 
     // 监听新标签页消息
     window.addEventListener('message', (event) => {

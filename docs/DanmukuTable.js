@@ -1,17 +1,14 @@
 export default function createDanmukuTable(Vue, ElementPlus) {
-    const { ref, computed, nextTick, h, watch } = Vue;
+    const { ref, computed, nextTick, h } = Vue;
     return {
         name: 'DanmukuTable',
         props: {
             items: Array,
             itemHeight: { type: Number, default: 42 },
-            virtualThreshold: { type: Number, default: 2400 },
-            scrollToTime: Number
+            virtualThreshold: { type: Number, default: 1200 },
+            menuItems: Array
         },
-        setup(props, { emit }) {
-            function handleRowClick(item) {
-                emit('row-click', item);
-            }
+        setup(props, { emit, expose }) {
             const scrollTop = ref(0);
             const scrollbarRef = ref(null);
             const isVirtual = computed(() => props.items.length > props.virtualThreshold);
@@ -26,6 +23,18 @@ export default function createDanmukuTable(Vue, ElementPlus) {
             };
             const highlightedRowIndex = ref(null);
 
+            function formatTime(ts) {
+                const d = new Date(ts * 1000);
+                const [Y, M, D, h, m, s] = [
+                    d.getFullYear(),
+                    String(d.getMonth() + 1).padStart(2, '0'),
+                    String(d.getDate()).padStart(2, '0'),
+                    String(d.getHours()).padStart(2, '0'),
+                    String(d.getMinutes()).padStart(2, '0'),
+                    String(d.getSeconds()).padStart(2, '0')
+                ];
+                return `${Y}-${M}-${D} ${h}:${m}:${s}`;
+            }
             function formatProgress(ms) {
                 const s = Math.floor(ms / 1000);
                 const min = String(Math.floor(s / 60)).padStart(2, '0');
@@ -42,13 +51,32 @@ export default function createDanmukuTable(Vue, ElementPlus) {
                     }
                 }, text);
             }
-            watch(() => props.scrollToTime, (val) => {
-                if (typeof val !== 'number') return; if (!props.items.length) return;
-                const idx = props.items.reduce((closestIdx, item, i) => {
-                    const currentDiff = Math.abs(item.progress - val);
-                    const closestDiff = Math.abs(props.items[closestIdx]?.progress - val);
-                    return currentDiff < closestDiff ? i : closestIdx;
-                }, 0);
+            function createMenu(item) {
+                const menuItems = props.menuItems;
+                const items = menuItems.map((menu, idx) =>
+                    h(ElementPlus.ElMenuItem, {
+                        index: idx,
+                        disabled: menu.disabled,
+                        style: { height: '36px', padding: '0 10px' }
+                    }, () => menu.getName(item))
+                );
+
+                // 菜单选择事件
+                const handleMenuSelect = async (index) => {
+                    const menu = menuItems[index];
+                    if (menu && typeof menu.onSelect === 'function') {
+                        menu.disabled = true;
+                        await menu.onSelect(item);
+                        menu.disabled = false;
+                    }
+                };
+
+                return h(ElementPlus.ElMenu, {
+                    onSelect: handleMenuSelect,
+                    style: { width: 'fit-content', borderRight: '0' }
+                }, items);
+            }
+            const scrollToRow = (idx) => {
                 nextTick(() => {
                     if (isVirtual.value) {
                         const top = Math.max(0, idx - 3) * props.itemHeight;
@@ -66,7 +94,8 @@ export default function createDanmukuTable(Vue, ElementPlus) {
                         highlightedRowIndex.value = null;
                     }, 1500);
                 });
-            });
+            };
+            expose({ scrollToRow });
             return () =>
                 h('div', {
                     class: { 'danmuku-table': true, 'danmuku-table--virtual': isVirtual.value },
@@ -105,21 +134,23 @@ export default function createDanmukuTable(Vue, ElementPlus) {
                                     },
                                     onMouseenter: (e) => e.currentTarget.style.backgroundColor = '#f5f7fa',
                                     onMouseleave: (e) => e.currentTarget.style.backgroundColor = '',
-                                    onClick: () => handleRowClick(item)
+                                    onClick: () => emit('row-click', item)
                                 }, [
                                     createCell(formatProgress(item.progress), { width: '70px' }),
-                                    h(ElementPlus.ElTooltip, {
-                                        content: `发送用户: ${item.midHash}\n 屏蔽等级: ${item.weight}`,
-                                        placement: 'top-start'
+                                    h(ElementPlus.ElPopover, {
+                                        placement: 'top-end',
+                                        showAfter: 200,
+                                        width: 'auto'
                                     }, {
-                                        default: () => createCell(item.content, {
+                                        reference: () => createCell(item.content, {
                                             flex: 1,
                                             wordBreak: 'break-word',
                                             whiteSpace: 'normal',
                                             overflowWrap: 'anywhere',
-                                        })
+                                        }),
+                                        default: () => createMenu(item)
                                     }),
-                                    createCell(new Date(item.ctime * 1000).toLocaleString(), { width: '170px', borderRight: 'none' })
+                                    createCell(formatTime(item.ctime), { width: '170px', borderRight: 'none' })
                                 ])
                             }
                             ))
