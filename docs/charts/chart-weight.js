@@ -2,6 +2,9 @@
     name: 'weight',
     title: '弹幕屏蔽等级分布',
     expandedH: false,
+    menuItems: [{
+        getName: (item) => '屏蔽等级：' + item.weight
+    }],
     render(data) {
         const levelCount = {};
         data.forEach(d => {

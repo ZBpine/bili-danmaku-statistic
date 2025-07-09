@@ -2,7 +2,12 @@
     name: 'mode',
     title: '弹幕类型分布',
     expandedH: false,
-    render(data) {
+    getMenuItems() {
+        return [
+            { getName: (item) => '类型：' + this.getLabel(item.mode) }
+        ];
+    },
+    getLabel(mode) {
         const labelMap = {
             1: '普通弹幕',
             2: '普通弹幕',
@@ -14,7 +19,9 @@
             8: '代码弹幕',
             9: 'BAS弹幕'
         };
-
+        return `${mode}-${labelMap[mode] || '未知类型'}`;
+    },
+    render(data) {
         const countMap = {};
         data.forEach(d => {
             const key = d.mode;
@@ -22,7 +29,7 @@
         });
 
         const keys = Object.keys(countMap);
-        const xData = keys.map(k => `${k}:${labelMap[k] || '未知类型'}`);
+        const xData = keys.map(k => this.getLabel(k));
         const yData = keys.map(k => countMap[k]);
 
         this._typeIndexMap = Object.fromEntries(xData.map((label, i) => [label, Number(keys[i])]));

@@ -3,14 +3,21 @@
     title: '弹幕池分布',
     instance: null,
     expandedH: false,
-    render(data) {
+    getMenuItems() {
+        return [
+            { getName: (item) => '弹幕池：' + this.getLabel(item.pool) }
+        ];
+    },
+    getLabel(pool) {
         const labelMap = {
             0: '普通池',
             1: '字幕池',
             2: '特殊池',
             3: '互动池'
         };
-
+        return `${pool ?? '_'}-${labelMap[pool] ?? '未知池'}`;
+    },
+    render(data) {
         // 动态统计出现过的 pool 值
         const poolMap = {};
         data.forEach(d => {
@@ -19,7 +26,7 @@
         });
 
         const keys = Object.keys(poolMap);
-        const xData = keys.map(k => labelMap[k] ?? `pool:${k}`);
+        const xData = keys.map(k => this.getLabel(k));
         const yData = keys.map(k => poolMap[k]);
         this._poolIndexMap = Object.fromEntries(xData.map((label, i) => [label, Number(keys[i])]));
 
