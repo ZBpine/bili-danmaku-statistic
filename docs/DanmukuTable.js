@@ -136,7 +136,7 @@ export default function createDanmukuTable(Vue, ElementPlus) {
                                     onMouseleave: (e) => e.currentTarget.style.backgroundColor = '',
                                     onClick: () => emit('row-click', item)
                                 }, [
-                                    createCell(formatProgress(item.progress), { width: '70px' }),
+                                    createCell(formatProgress(item.progress ?? 0), { width: '70px' }),
                                     h(ElementPlus.ElPopover, {
                                         placement: 'top-end',
                                         showAfter: 200,

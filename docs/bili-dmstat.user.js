@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      2.1.0
+// @version      2.1.1
 // @description  获取B站弹幕数据，并生成统计页面。
 // @author       ZBpine
 // @icon         https://www.bilibili.com/favicon.ico
@@ -1521,7 +1521,7 @@ onmessage = function (e) {
                 </div>
                 <el-collapse-transition>
                     <danmuku-table ref="danmukuTableRef" v-show="isTableVisible" :virtual-threshold="800"
-                        :items="danmakuTableItems" :menu-items="danmakuTableMenus" />
+                        :items="danmakuTableItems" :menu-items="danmakuTableMenus" @row-click="d => console.log(d)" />
                 </el-collapse-transition>
             </div>
         </div>
@@ -2016,7 +2016,7 @@ onmessage = function (e) {
         URL.revokeObjectURL(blobUrl);
     }
 
-    const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.1.0/';
+    const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.1.1/';
     const downPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bilibili-danmaku-download@1.6.1.5/'
     const { BiliMidHashConverter } = await import(statPath + 'docs/BiliMidHashConverter.js');
     const { createBiliDataManagerImport } = await import(downPath + 'tampermonkey/BiliDataManager.js');
