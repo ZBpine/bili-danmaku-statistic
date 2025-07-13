@@ -42,8 +42,8 @@
                 name: '弹幕数量'
             },
             series: [{
-                type: 'bar',
-                data: yData
+                type: 'bar', data: yData,
+                label: { show: true, position: 'top' }
             }]
         });
     },

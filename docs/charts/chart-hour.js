@@ -14,7 +14,10 @@
             tooltip: {},
             xAxis: { type: 'category', data: hours.map((_, i) => i + '时') },
             yAxis: { type: 'value', name: '弹幕数量' },
-            series: [{ type: 'bar', data: hours }]
+            series: [{
+                type: 'bar', data: hours,
+                label: { show: true, position: 'top' }
+            }]
         });
     },
     async onClick({ params, applySubFilter }) {

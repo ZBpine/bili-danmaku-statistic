@@ -30,7 +30,10 @@
                     height: 20
                 }
             ],
-            series: [{ type: 'bar', data: y }]
+            series: [{
+                type: 'bar', data: y,
+                label: { show: true, position: 'top' }
+            }]
         });
     },
     async onClick({ params, applySubFilter }) {

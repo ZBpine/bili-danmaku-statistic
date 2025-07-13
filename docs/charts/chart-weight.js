@@ -1,7 +1,7 @@
 ({
     name: 'weight',
     title: '弹幕屏蔽等级分布',
-    expandedH: false,
+    refresh: true,
     menuItems: [{
         getName: (item) => '屏蔽等级：' + item.weight
     }],
@@ -21,7 +21,10 @@
             tooltip: {},
             xAxis: { type: 'category', data: xData },
             yAxis: { type: 'value', name: '弹幕数' },
-            series: [{ type: 'bar', data: yData }]
+            series: [{
+                type: 'bar', data: yData,
+                label: { show: true, position: 'top' }
+            }]
         });
     },
     async onClick({ params, applySubFilter, ELEMENT_PLUS }) {
