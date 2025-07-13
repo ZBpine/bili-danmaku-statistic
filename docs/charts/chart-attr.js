@@ -98,9 +98,10 @@
                         return `属性值：${attr}<br/>数量：${params.value}<br/>占比：${percentages[labels.indexOf(attr)]}%<br/>位说明：${this.getAttrBits(attr).str}`;
                     }
                 },
+                legend: { bottom: 'bottom' },
                 series: [{
                     type: 'pie',
-                    radius: '60%',
+                    radius: '50%',
                     data: labels.map((k, i) => ({
                         name: k,
                         value: counts[i]
