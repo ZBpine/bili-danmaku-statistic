@@ -1,6 +1,11 @@
 export class BiliMidHashConverter {
     constructor() {
         this.crcTable = this._createCRCTable();
+        this.midHashTable = new Map();
+        for (let i = 0; i < 1000; i++) {
+            const hash = this.midToHash(i);
+            this.midHashTable.set(hash, i.toString());
+        }
     }
     _createCRCTable() {
         const table = new Array(256);
@@ -42,6 +47,9 @@ export class BiliMidHashConverter {
      * @param {number} maxTry 最大尝试次数（默认一亿）
      */
     hashToMid(hashStr, maxTry = 100_000_000) {
+        if (this.midHashTable.has(hashStr)) {
+            return this.midHashTable.get(hashStr);
+        }
         var index = new Array(4);
 
         var ht = parseInt('0x' + hashStr) ^ 0xffffffff,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      2.1.1
+// @version      2.1.2
 // @description  获取B站弹幕数据，并生成统计页面。
 // @author       ZBpine
 // @icon         https://www.bilibili.com/favicon.ico
@@ -82,7 +82,7 @@
         doc.body.appendChild(appRoot);
 
         // 挂载Vue
-        const { createApp, ref, reactive, onMounted, nextTick, h, computed } = win.Vue;
+        const { createApp, ref, reactive, toRaw, onMounted, nextTick, h, computed } = win.Vue;
         const ELEMENT_PLUS = win.ElementPlus;
         const ECHARTS = win.echarts;
         const ICONS = win.ElementPlusIconsVue;
@@ -115,6 +115,11 @@
                 const subFiltHistory = ref([]);
                 const danmakuCount = ref({ origin: 0, filtered: 0 });
                 const videoInfo = reactive(dataMgr.info || {});
+                const commandDms = ref(
+                    Array.isArray(dataMgr.data.commandDms)
+                        ? dataMgr.data.commandDms.map(cmd => parseCommandDm(cmd))
+                        : []
+                );
                 const isTableVisible = ref(true);
                 const isTableAutoH = ref(false);
                 const loading = ref(true);
@@ -981,7 +986,7 @@ onmessage = function (e) {
                                 );
                                 data.danmakuData = [];
                             }
-                            danmakuList.original = [...data.danmakuData].sort((a, b) => a.progress - b.progress);
+                            danmakuList.original = [...data.danmakuData].sort((a, b) => (a.progress ?? 0) - (b.progress ?? 0));
                             danmakuCount.value.origin = danmakuList.original.length;
                             await resetFilter();
                             if (desc) ELEMENT_PLUS.ElMessage.success(`成功新增${desc}弹幕：${added} 条`);
@@ -1014,6 +1019,8 @@ onmessage = function (e) {
                                 dataLoader.progress.text = `弹幕片段：第 ${segIndex} 段（${current}/${total}） ${count} 条弹幕`;
                             });
                         }, ' Protobuf ');
+                        commandDms.value = Array.isArray(dataMgr.data.commandDms) ?
+                            dataMgr.data.commandDms.map(cmd => parseCommandDm(cmd)) : [];
                     },
                     selectedMonth: '',
                     disabledMonth(date) {
@@ -1037,13 +1044,154 @@ onmessage = function (e) {
                             });
                         }, ` ${dataLoader.selectedMonth} 历史`);
                     }
-                })
+                });
 
                 function formatProgress(ms) {
                     const s = Math.floor(ms / 1000);
                     const min = String(Math.floor(s / 60)).padStart(2, '0');
                     const sec = String(s % 60).padStart(2, '0');
                     return `${min}:${sec}`;
+                }
+                async function danmakuTableRowClick(row) {
+                    danmakuTableMenus.forEach(async mi => {
+                        if (typeof mi.onSelect === 'function') {
+                            await mi.onSelect(row);
+                        }
+                    });
+                    console.log(toRaw(row));
+                }
+
+                function parseCommandDm(cmd) {
+                    let extra = {};
+                    try { extra = cmd.extra ? (typeof cmd.extra === 'string' ? JSON.parse(cmd.extra) : cmd.extra) : {}; } catch { extra = {}; }
+                    let icon = null;
+                    let type = '';
+                    if (extra.icon) {
+                        extra.icon = extra.icon.replace(/^http:/, 'https:');
+                        icon = h('img', { src: extra.icon, style: 'width:20px;height:20px;' });
+                    } else {
+                        icon = h(ELEMENT_PLUS.ElIcon, { style: 'font-size: 0.8em;' }, {
+                            default: () => h(ICONS.Operation)
+                        });
+                        type = 'primary';
+                    }
+                    let content = null;
+                    switch (cmd.command) {
+                        case '#VOTE#':
+                            content = h('div', [
+                                h('div', {
+                                    style: { display: 'flex', alignItems: 'center', gap: '8px' }
+                                }, [
+                                    h(ELEMENT_PLUS.ElText, { type: 'success' }, '【投票】'),
+                                    h('b', extra.question ?? cmd.content)
+                                ]),
+                                Array.isArray(extra.options) && extra.options.length ?
+                                    h(ELEMENT_PLUS.ElTable, {
+                                        data: extra.options,
+                                        border: true,
+                                        size: 'small',
+                                        style: 'margin: 8px; width: auto;'
+                                    }, {
+                                        default: () => [
+                                            h(ELEMENT_PLUS.ElTableColumn, { prop: 'idx', label: '序号', width: 80, sortable: true }),
+                                            h(ELEMENT_PLUS.ElTableColumn, { prop: 'desc', label: '选项' }),
+                                            h(ELEMENT_PLUS.ElTableColumn, { prop: 'cnt', label: '票数', width: 80, sortable: true })
+                                        ]
+                                    }) : null
+                            ]);
+                            break;
+                        case '#LINK#':
+                            content = h('div', [
+                                h('div', {
+                                    style: { display: 'flex', alignItems: 'center', gap: '8px' }
+                                }, [
+                                    h(ELEMENT_PLUS.ElText, { type: 'primary' }, '【关联】'),
+                                    h('b', cmd.content)
+                                ]),
+                                h('div', [
+                                    h(ELEMENT_PLUS.ElLink, {
+                                        style: { margin: '8px' },
+                                        href: 'https://www.bilibili.com/video/' + extra.bvid,
+                                        target: '_blank'
+                                    }, extra.title)
+                                ])
+                            ]);
+                            break;
+                        case '#GRADE#':
+                            content = h('div', [
+                                h('div', {
+                                    style: { display: 'flex', alignItems: 'center', gap: '8px' }
+                                }, [
+                                    h(ELEMENT_PLUS.ElText, { type: 'warning' }, '【评分】'),
+                                    h('b', extra.msg ?? cmd.content),
+                                    h(ELEMENT_PLUS.ElText, '平均: ' + (extra.avg_score ?? '-')),
+                                    h(ELEMENT_PLUS.ElText, '参与: ' + (extra.count ?? '-'))
+                                ])
+                            ]);
+                            break;
+                        case '#GRADESUMMARY#':
+                            content = h('div', [
+                                h('div', {
+                                    style: { display: 'flex', alignItems: 'center', gap: '8px' }
+                                }, [
+                                    h(ELEMENT_PLUS.ElText, { type: 'warning' }, '【评分总结】'),
+                                    h('b', extra.msg ?? cmd.content)
+                                ]),
+                                extra.avg_score !== undefined ? h('div', { style: { marginTop: '6px', marginLeft: '8px' } }, `平均：${extra.avg_score}`) : null,
+                                Array.isArray(extra.grades) && extra.grades.length ?
+                                    h(ELEMENT_PLUS.ElTable, {
+                                        data: extra.grades,
+                                        border: true,
+                                        size: 'small',
+                                        style: 'margin: 8px; width: auto;'
+                                    }, {
+                                        default: () => [
+                                            h(ELEMENT_PLUS.ElTableColumn, { prop: 'content', label: '评分项' }),
+                                            h(ELEMENT_PLUS.ElTableColumn, { prop: 'avg_score', label: '平均', width: 80, sortable: true }),
+                                            h(ELEMENT_PLUS.ElTableColumn, { prop: 'count', label: '参与', width: 80, sortable: true })
+                                        ]
+                                    }) : null
+                            ]);
+                            break;
+                        case '#ATTENTION#':
+                            content = h('div', [
+                                h('div', {
+                                    style: { display: 'flex', alignItems: 'center', gap: '8px' }
+                                }, [
+                                    h(ELEMENT_PLUS.ElText, { type: 'danger' }, '【关注】'),
+                                    h('b', cmd.content)
+                                ])
+                            ]);
+                            break;
+                        case '#RESERVE#':
+                            content = h('div', [
+                                h('div', {
+                                    style: { display: 'flex', alignItems: 'center', gap: '8px' }
+                                }, [
+                                    h(ELEMENT_PLUS.ElText, { type: 'danger' }, '【预约】'),
+                                    h('b', extra.msg ?? cmd.content)
+                                ])
+                            ]);
+                            break;
+                        default:
+                            console.log('未知互动弹幕', cmd);
+                            content = h('div', [
+                                h('div', {
+                                    style: { display: 'flex', alignItems: 'center', gap: '8px' }
+                                }, [
+                                    h(ELEMENT_PLUS.ElText, { type: 'primary' }, cmd.command),
+                                    h('b', cmd.content)
+                                ])
+                            ]);
+                    }
+                    return {
+                        key: cmd.idStr,
+                        timestamp: `时间：${formatProgress(cmd.progress ?? 0)} | 发送时间：${cmd.ctime}`,
+                        icon,
+                        type,
+                        content,
+                        onClick: () => { console.log(cmd); }
+                    };
                 }
 
                 function downloadData() {
@@ -1086,8 +1234,8 @@ onmessage = function (e) {
                         ELEMENT_PLUS.ElMessage.error('找不到截图区域');
                         return;
                     }
-                    loading.value = true;
                     try {
+                        loading.value = true;
                         titleWrapper.style.paddingBottom = '10px';  //dom-to-image-more会少截
                         tableWrapper.style.paddingBottom = '40px';
                         await nextTick();
@@ -1376,12 +1524,16 @@ onmessage = function (e) {
                 });
                 return {
                     h,
+                    danmukuTableRef,
                     danmakuTableItems,
+                    danmakuTableMenus,
+                    danmakuTableRowClick,
                     excludeFilter,
                     filterText,
                     applyFilter,
                     resetFilter,
                     videoInfo,
+                    commandDms,
                     danmakuCount,
                     currentFilt,
                     currentSubFilt,
@@ -1397,8 +1549,6 @@ onmessage = function (e) {
                     clearSubFilter,
                     commitSubFilter,
                     applyActiveSubFilters,
-                    danmakuTableMenus,
-                    danmukuTableRef,
                     shareImage,
                     downloadData
                 };
@@ -1451,6 +1601,17 @@ onmessage = function (e) {
                                 </el-text>
                             </el-space>
                         </el-space>
+                    </el-collapse-item>
+                    <el-collapse-item name="2" v-if="commandDms && commandDms.length"
+                        :title="'互动弹幕 ' + (commandDms.length.toLocaleString()) + ' 条'">
+                        <el-timeline style="padding-top: 10px;">
+                            <el-timeline-item v-for="cmd in commandDms" :key="cmd.key" :timestamp="cmd.timestamp"
+                                :type="cmd.type" :icon="cmd.icon" placement="top">
+                                <el-card shadow="hover" @click="cmd.onClick">
+                                    <component :is="cmd.content" />
+                                </el-card>
+                            </el-timeline-item>
+                        </el-timeline>
                     </el-collapse-item>
                 </el-collapse>
                 <p style="
@@ -1521,7 +1682,7 @@ onmessage = function (e) {
                 </div>
                 <el-collapse-transition>
                     <danmuku-table ref="danmukuTableRef" v-show="isTableVisible" :virtual-threshold="800"
-                        :items="danmakuTableItems" :menu-items="danmakuTableMenus" @row-click="d => console.log(d)" />
+                        :items="danmakuTableItems" :menu-items="danmakuTableMenus" @row-click="danmakuTableRowClick" />
                 </el-collapse-transition>
             </div>
         </div>
@@ -2016,7 +2177,7 @@ onmessage = function (e) {
         URL.revokeObjectURL(blobUrl);
     }
 
-    const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.1.1/';
+    const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.1.2/';
     const downPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bilibili-danmaku-download@1.6.1.5/'
     const { BiliMidHashConverter } = await import(statPath + 'docs/BiliMidHashConverter.js');
     const { createBiliDataManagerImport } = await import(downPath + 'tampermonkey/BiliDataManager.js');
