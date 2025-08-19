@@ -37,9 +37,12 @@ export default function createDanmukuTable(Vue, ElementPlus) {
             }
             function formatProgress(ms) {
                 const s = Math.floor(ms / 1000);
-                const min = String(Math.floor(s / 60)).padStart(2, '0');
+                const hours = Math.floor(s / 3600);
+                const min = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
                 const sec = String(s % 60).padStart(2, '0');
-                return `${min}:${sec}`;
+                return hours > 0
+                    ? `${hours}:${min}:${sec}`
+                    : `${min}:${sec}`;
             }
             function createCell(text, style = {}) {
                 return h('div', {

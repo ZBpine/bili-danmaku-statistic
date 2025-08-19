@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      2.1.2
+// @version      2.1.3
 // @description  获取B站弹幕数据，并生成统计页面。
 // @author       ZBpine
 // @icon         https://www.bilibili.com/favicon.ico
@@ -56,16 +56,16 @@
         // 引入外部库
         const loader = new ResourceLoader(doc);
         await Promise.all([
-            loader.addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css'),
-            loader.addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js'),
-            loader.addScript('https://cdn.jsdelivr.net/npm/echarts@5')
+            loader.addCss(cdnUrl + '/npm/element-plus/dist/index.css'),
+            loader.addScript(cdnUrl + '/npm/vue@3.3.4/dist/vue.global.prod.js'),
+            loader.addScript(cdnUrl + '/npm/echarts@5')
         ]);
         await Promise.all([
-            loader.addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js'),
-            loader.addScript('https://cdn.jsdelivr.net/npm/@element-plus/icons-vue/dist/index.iife.min.js'),
-            loader.addScript('https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js'),
-            loader.addScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js'),
-            loader.addScript('https://cdn.jsdelivr.net/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js')
+            loader.addScript(cdnUrl + '/npm/element-plus/dist/index.full.min.js'),
+            loader.addScript(cdnUrl + '/npm/@element-plus/icons-vue/dist/index.iife.min.js'),
+            loader.addScript(cdnUrl + '/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js'),
+            loader.addScript(cdnUrl + '/npm/html2canvas@1.4.1/dist/html2canvas.min.js'),
+            loader.addScript(cdnUrl + '/npm/dom-to-image-more@3.5.0/dist/dom-to-image-more.min.js')
         ]);
         const [createVideoInfoPanel, createDanmukuTable] = await Promise.all([
             import(statPath + 'docs/VideoInfoPanel.js'),
@@ -88,7 +88,7 @@
         const ICONS = win.ElementPlusIconsVue;
         const app = createApp({
             setup() {
-                ['Setting', 'Plus', 'Delete', 'Download', 'User', 'PictureFilled'].forEach(key => {
+                ['Setting', 'Plus', 'Delete', 'Download', 'InfoFilled'].forEach(key => {
                     app.component('ElIcon' + key, ICONS[key]);
                 });
                 app.component('VideoInfoPanel', VideoInfoPanel);
@@ -357,7 +357,7 @@
 
                             const workerCode = `
 var startTime = new Date().getTime();
-importScripts('https://cdn.jsdelivr.net/npm/segmentit@2.0.3/dist/umd/segmentit.min.js');
+importScripts('${cdnUrl}/npm/segmentit@2.0.3/dist/umd/segmentit.min.js');
 const segmentit = Segmentit.useDefault(new Segmentit.Segment());
 console.log('Segmentit初始化耗时：' + (new Date().getTime() - startTime) + 'ms');
 
@@ -429,7 +429,7 @@ onmessage = function (e) {
                             // 深度模式：调用 Worker + Segmentit
                             await this.initWorker();
                             return new Promise((resolve, reject) => {
-                                const timeout = setTimeout(() => reject(new Error('词云分词超时')), 10000);
+                                const timeout = setTimeout(() => reject(new Error('词云分词超时')), 30000);
                                 this.segmentWorker.onmessage = (e) => {
                                     clearTimeout(timeout);
                                     const list = e.data;
@@ -480,6 +480,12 @@ onmessage = function (e) {
                         clickBuffer: [],
                         actions: [
                             {
+                                key: 'addLabel',
+                                icon: '📌',
+                                title: '添加标记',
+                                method: 'setLabel'
+                            },
+                            {
                                 key: 'toggleRange',
                                 icon: '🧭',
                                 title: '切换范围选择模式',
@@ -492,6 +498,98 @@ onmessage = function (e) {
                                 method: 'clearSubFilt'
                             }
                         ],
+                        labelText: '',
+                        labelPosition: ref('end'),
+                        setLabel() {
+                            const parseTimeText = (text) => {
+                                const lines = text.split('\n');
+                                const result = [];
+
+                                const timeRegex = /(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?/;
+
+                                for (const line of lines) {
+                                    if (!line.trim()) continue;  // 跳过空行
+
+                                    const timeMatch = line.match(timeRegex);
+                                    if (timeMatch) {
+                                        // 解析时间部分
+                                        const part1 = parseInt(timeMatch[1]);
+                                        const part2 = parseInt(timeMatch[2]);
+                                        const part3 = timeMatch[3] ? parseInt(timeMatch[3]) : null;
+
+                                        // 判断时间格式类型
+                                        let totalSeconds;
+                                        if (part3 !== null) {  // HH:mm:ss 格式
+                                            totalSeconds = part1 * 3600 + part2 * 60 + part3;
+                                        } else {  // mm:ss 格式
+                                            totalSeconds = part1 * 60 + part2;
+                                        }
+
+                                        // 提取标签（移除时间部分）
+                                        const label = line.replace(timeMatch[0], '').trim();
+
+                                        result.push({
+                                            progress: totalSeconds,
+                                            label: label || line  // 保留文本如果标签为空
+                                        });
+                                    }
+                                }
+
+                                return result;
+                            }
+                            ELEMENT_PLUS.ElMessageBox({
+                                title: '设置标记',
+                                message: h('div', null, [
+                                    h(ELEMENT_PLUS.ElText, { type: 'info' }, '请输入标记时间和文本'),
+                                    h('textarea', {
+                                        style: {
+                                            width: '100%',
+                                            minHeight: '120px',
+                                            margin: '12px 0px'
+                                        },
+                                        value: this.labelText,
+                                        placeholder: '6:06 示例\n12:12 示例2',
+                                        onInput: e => this.labelText = e.target.value,
+                                    }),
+                                    h('div', null, [
+                                        h(ELEMENT_PLUS.ElText, { type: 'info' }, '标记位置：'),
+                                        h(ELEMENT_PLUS.ElRadioGroup, {
+                                            style: 'vertical-align: top;',
+                                            size: 'small',
+                                            modelValue: this.labelPosition,
+                                            'onUpdate:modelValue': value => this.labelPosition.value = value
+                                        }, [
+                                            h(ELEMENT_PLUS.ElRadioButton, { label: 'end' }, '顶端'),
+                                            h(ELEMENT_PLUS.ElRadioButton, { label: 'insideEnd' }, '内部')
+                                        ])
+                                    ])
+                                ])
+                            }).then(() => {
+                                const labels = parseTimeText(this.labelText).map(item => ({
+                                    name: item.label,
+                                    xAxis: item.progress
+                                }));
+                                this.instance.setOption({
+                                    series: [null, {
+                                        markLine: {
+                                            silent: true,
+                                            animation: false,
+                                            symbol: 'none',
+                                            data: labels,
+                                            label: {
+                                                position: this.labelPosition.value,
+                                                formatter: '{b}' // 使用数据中的name作为标签
+                                            }
+                                        }
+                                    }]
+                                });
+                            }).catch((err) => {
+                                if (err !== 'cancel') {
+                                    console.error(err);
+                                    ELEMENT_PLUS.ElMessage.error('设置失败');
+                                }
+                            });
+                        },
                         toggleRangeMode() {
                             this.rangeMode = !this.rangeMode;
                             this.clickBuffer = [];
@@ -500,20 +598,24 @@ onmessage = function (e) {
                                 series: [{
                                     markLine: null,
                                     markArea: null
-                                }]
+                                }, null]
                             });
                             ELEMENT_PLUS.ElMessage.success(`已${this.rangeMode ? '进入' : '退出'}范围选择模式`);
                         },
                         render(data) {
                             const duration = videoInfo.duration * 1000; // ms
-                            const minutes = duration / 1000 / 60;
+                            const allowedIntervals = [1, 2, 3, 4, 5, 6, 10, 15, 20, 30];
 
-                            // 动态设置 bin 数量
-                            let binCount = 100;
-                            if (minutes <= 10) binCount = 60;
-                            else if (minutes <= 30) binCount = 90;
-                            else if (minutes <= 60) binCount = 60;
-                            else binCount = 30;
+                            let roughInterval = videoInfo.duration / 60;
+                            let zoom = 1000;
+                            while (roughInterval > 45) {
+                                roughInterval /= 60;
+                                zoom *= 60;
+                            }
+                            const interval = zoom * allowedIntervals.reduce((a, b) =>
+                                Math.abs(b - roughInterval) < Math.abs(a - roughInterval) ? b : a
+                            );
+                            const binCount = Math.ceil(duration / interval);
 
                             const bins = new Array(binCount).fill(0);
                             data.forEach(d => {
@@ -523,7 +625,7 @@ onmessage = function (e) {
 
                             const dataPoints = [];
                             for (let i = 0; i < binCount; i++) {
-                                const timeSec = Math.floor((i * duration) / binCount / 1000);
+                                const timeSec = Math.floor(i * interval / 1000);
                                 dataPoints.push({
                                     value: [timeSec, bins[i]],
                                     name: formatProgress(timeSec * 1000)
@@ -561,8 +663,8 @@ onmessage = function (e) {
                                     data: dataPoints,
                                     type: 'line',
                                     smooth: true,
-                                    areaStyle: {} // 可选加背景区域
-                                }]
+                                    areaStyle: {}
+                                }, null]
                             });
                         },
                         async onClick({ params, applySubFilter }) {
@@ -606,7 +708,7 @@ onmessage = function (e) {
                                                 }
                                             ]
                                         }
-                                    }]
+                                    }, null]
                                 });
                                 ELEMENT_PLUS.ElMessage.info('请点击结束时间');
                                 return;
@@ -634,7 +736,7 @@ onmessage = function (e) {
                                             ]
                                         ]
                                     }
-                                }]
+                                }, null]
                             });
 
                             await applySubFilter({
@@ -657,7 +759,7 @@ onmessage = function (e) {
                                 series: [{
                                     markLine: null,
                                     markArea: null
-                                }]
+                                }, null]
                             });
                         }
                     }
@@ -916,10 +1018,13 @@ onmessage = function (e) {
                         };
                         const registerChartMenuItems = (chartName, chartDef) => {
                             if (Array.isArray(chartDef.menuItems)) {
+                                const menuItems = chartDef.getMenuItems();
+                                menuItems.forEach(item => item.chart = chartName);
                                 danmakuTableMenus.push(...chartDef.menuItems);
                             }
                             if (chartDef.getMenuItems && typeof chartDef.getMenuItems == 'function') {
                                 const menuItems = chartDef.getMenuItems();
+                                menuItems.forEach(item => item.chart = chartName);
                                 danmakuTableMenus.push(...menuItems);
                             }
                         };
@@ -969,6 +1074,32 @@ onmessage = function (e) {
                     }
                 });
                 const dataLoader = reactive({
+                    autoLoadXml: true,
+                    autoLoadXmlChange: () => {
+                        DmstatStorage.set('autoLoadXml', dataLoader.autoLoadXml);
+                    },
+                    autoLoadPb: false,
+                    autoLoadPbChange: () => {
+                        DmstatStorage.set('autoLoadPb', dataLoader.autoLoadPb);
+                    },
+                    init: async () => {
+                        dataLoader.autoLoadXml = DmstatStorage.get('autoLoadXml', true);
+                        dataLoader.autoLoadPb = DmstatStorage.get('autoLoadPb', false);
+                        let loaded = false;
+                        if (panelInfo.value.type === 0) {
+                            if (dataLoader.autoLoadXml) {
+                                await dataLoader.loadXml();
+                                loaded = true;
+                            }
+                            if (dataLoader.autoLoadPb) {
+                                await dataLoader.loadPb();
+                                loaded = true;
+                            }
+                        }
+                        if (!loaded) {
+                            await dataLoader.load();
+                        }
+                    },
                     load: async (getter = async () => { }, desc = null) => {
                         try {
                             dataLoader.progress.visible = true;
@@ -1005,6 +1136,7 @@ onmessage = function (e) {
                     },
                     clear: async () => {
                         dataMgr.clearDmList();
+                        commandDms.value = [];
                         await dataLoader.load();
                         ELEMENT_PLUS.ElMessage.success('已清除弹幕列表');
                     },
@@ -1016,7 +1148,7 @@ onmessage = function (e) {
                             return await dataMgr.getDanmakuPb((current, total, segIndex, count) => {
                                 dataLoader.progress.current = current;
                                 dataLoader.progress.total = total;
-                                dataLoader.progress.text = `弹幕片段：第 ${segIndex} 段（${current}/${total}） ${count} 条弹幕`;
+                                dataLoader.progress.text = `第 ${segIndex} 段（${current}/${total}） ${count} 条弹幕`;
                             });
                         }, ' Protobuf ');
                         commandDms.value = Array.isArray(dataMgr.data.commandDms) ?
@@ -1040,7 +1172,7 @@ onmessage = function (e) {
                             return await dataMgr.getDanmakuHisPb(dataLoader.selectedMonth, (current, total, date, count) => {
                                 dataLoader.progress.current = current;
                                 dataLoader.progress.total = total;
-                                dataLoader.progress.text = `历史弹幕：${date}（${current}/${total}） ${count} 条弹幕`;
+                                dataLoader.progress.text = `${date}（${current}/${total}） ${count} 条弹幕`;
                             });
                         }, ` ${dataLoader.selectedMonth} 历史`);
                     }
@@ -1048,14 +1180,19 @@ onmessage = function (e) {
 
                 function formatProgress(ms) {
                     const s = Math.floor(ms / 1000);
-                    const min = String(Math.floor(s / 60)).padStart(2, '0');
+                    const hours = Math.floor(s / 3600);
+                    const min = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
                     const sec = String(s % 60).padStart(2, '0');
-                    return `${min}:${sec}`;
+                    return hours > 0
+                        ? `${hours}:${min}:${sec}`
+                        : `${min}:${sec}`;
                 }
                 async function danmakuTableRowClick(row) {
-                    danmakuTableMenus.forEach(async mi => {
-                        if (typeof mi.onSelect === 'function') {
-                            await mi.onSelect(row);
+                    danmakuTableMenus.forEach(async menu => {
+                        if (typeof menu.onSelect === 'function') {
+                            menu.disabled = true;
+                            await menu.onSelect(row);
+                            menu.disabled = false;
                         }
                     });
                     console.log(toRaw(row));
@@ -1520,7 +1657,7 @@ onmessage = function (e) {
                     chartConfig.chartsVisible = DmstatStorage.get('chartsVisible', Object.keys(charts));
                     chartConfig.loadRemoteList();
 
-                    await dataLoader.load();
+                    await dataLoader.init();
                 });
                 return {
                     h,
@@ -1566,31 +1703,47 @@ onmessage = function (e) {
                         <el-space v-if="panelInfo.type == 0" :size="12" wrap direction="vertical"
                             alignment="flex-start">
                             <el-alert type="warning" title="请不要短时间内频繁载入，否则可能触发B站风控。" show-icon />
-                            <el-alert type="info">
-                                已默认载入 XML 实时弹幕。B站使用 ProtoBuf 实时弹幕，通常比 XML 弹幕更全。
-                            </el-alert>
-                            <el-space wrap>
-                                <el-button type="danger" size="small" :disabled="dataLoader.progress.visible"
-                                    @click="dataLoader.clear">清除弹幕</el-button>
-                                <el-button type="primary" size="small" :disabled="dataLoader.progress.visible"
-                                    @click="dataLoader.loadXml">载入 XML 实时弹幕</el-button>
-                                <el-button type="primary" size="small" :disabled="dataLoader.progress.visible"
-                                    @click="dataLoader.loadPb">载入 ProtoBuf 实时弹幕</el-button>
+                            <el-space wrap :size="20">
+                                <el-button type="primary" size="small" @click="dataLoader.loadXml" style="width: 150px;"
+                                    :disabled="dataLoader.progress.visible">载入 XML 实时弹幕</el-button>
+                                <el-checkbox v-model="dataLoader.autoLoadXml"
+                                    @change="dataLoader.autoLoadXmlChange">自动载入</el-checkbox>
+                                <el-tooltip placement="top" effect="light" trigger="click"
+                                    content="实时弹幕池容量有限，通常为近期的弹幕。">
+                                    <el-button type="primary" circle text>
+                                        <el-icon><el-icon-info-filled /></el-icon>
+                                    </el-button>
+                                </el-tooltip>
                             </el-space>
-                            <el-space wrap>
+                            <el-space wrap :size="20">
+                                <el-button type="primary" size="small" @click="dataLoader.loadPb" style="width: 150px;"
+                                    :disabled="dataLoader.progress.visible">载入 ProtoBuf 弹幕</el-button>
+                                <el-checkbox v-model="dataLoader.autoLoadPb"
+                                    @change="dataLoader.autoLoadPbChange">自动载入</el-checkbox>
+                                <el-tooltip placement="top" effect="light" trigger="click"
+                                    content="二进制数据，每6分钟一包，弹幕较多时通常更全。">
+                                    <el-button type="primary" circle text>
+                                        <el-icon><el-icon-info-filled /></el-icon>
+                                    </el-button>
+                                </el-tooltip>
+                            </el-space>
+                            <el-space wrap :size="20">
                                 <el-date-picker v-model="dataLoader.selectedMonth" type="month" size="small"
-                                    placeholder="选择月份" value-format="YYYY-MM"
+                                    placeholder="选择月份" value-format="YYYY-MM" style="width: 150px;"
                                     :disabled-date="dataLoader.disabledMonth" />
-                                <el-button type="success" size="small" :disabled="dataLoader.progress.visible"
-                                    style="margin-left: 10px;" @click="dataLoader.loadHis">
-                                    载入历史弹幕
+                                <el-button type="primary" size="small" @click="dataLoader.loadHis"
+                                    :disabled="dataLoader.progress.visible">载入历史弹幕
                                 </el-button>
                             </el-space>
                             <el-space wrap :size="12">
-                                <el-button type="primary" size="small" @click="downloadData">
+                                <el-button type="danger" size="small" @click="dataLoader.clear"
+                                    :disabled="dataLoader.progress.visible">
+                                    <el-icon style="font-size: 12px;"><el-icon-delete /></el-icon> 清除弹幕
+                                </el-button>
+                                <el-button type="success" size="small" @click="downloadData">
                                     <el-icon style="font-size: 12px;"><el-icon-download /></el-icon> 下载数据
                                 </el-button>
-                                <div style="width: 120px;">
+                                <div style="width: 100px;">
                                     <el-progress v-if="dataLoader.progress.visible"
                                         :percentage="Math.floor((dataLoader.progress.current / dataLoader.progress.total) * 100) || 0"
                                         :text-inside="true" :stroke-width="18">
@@ -1839,10 +1992,10 @@ onmessage = function (e) {
 
         const loader = new ResourceLoader(doc);
         await Promise.all([
-            loader.addCss('https://cdn.jsdelivr.net/npm/element-plus/dist/index.css'),
-            loader.addScript('https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js')
+            loader.addCss(cdnUrl + '/npm/element-plus/dist/index.css'),
+            loader.addScript(cdnUrl + '/npm/vue@3.3.4/dist/vue.global.prod.js')
         ]);
-        await loader.addScript('https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js');
+        await loader.addScript(cdnUrl + '/npm/element-plus/dist/index.full.min.js');
 
         const appRoot = doc.createElement('div');
         appRoot.id = 'user-space-app';
@@ -2024,8 +2177,9 @@ onmessage = function (e) {
                     const userData = await BiliDataManager.api.getUserCard(mid);
                     return initUserIframeApp(iframe, userData);
                 } else {
+                    dmData = new BiliDataManager();
+                    unsafeWindow.dmData = dmData;
                     await dmData.getData(location.href);
-                    await dmData.getDanmakuXml();
                     return initIframeApp(iframe, dmData, {
                         type: 0, newPanel: function (type) {
                             if (type == 0) {
@@ -2115,6 +2269,7 @@ onmessage = function (e) {
             ${ResourceLoader.toString()}
             ${initIframeApp.toString()}
             ${BiliMidHashConverter.toString()}
+            const cdnUrl = '${cdnUrl}';
             const statPath = '${statPath}';
             const dmData = {};
             Object.assign(dmData, ${JSON.stringify(dmData)});
@@ -2177,8 +2332,36 @@ onmessage = function (e) {
         URL.revokeObjectURL(blobUrl);
     }
 
-    const statPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bili-danmaku-statistic@2.1.2/';
-    const downPath = 'https://cdn.jsdelivr.net/gh/ZBpine/bilibili-danmaku-download@1.6.1.5/'
+    async function getFastestCDN() {
+        //https://zhang-zhonggui.github.io/2024/06/17/jsdelivr%E5%9B%BD%E5%86%85%E5%8A%A0%E9%80%9F%E8%8A%82%E7%82%B9/
+        const cdnList = [
+            'https://cdn.jsdelivr.net',
+            'https://gcore.jsdelivr.net',
+            'https://testingcf.jsdelivr.net',
+            'https://fastly.jsdelivr.net',
+            'https://quantil.jsdelivr.net',
+            'https://originfastly.jsdelivr.net'
+        ];
+        const testPath = '/cdn-cgi/trace';
+        const timeout = 3000; // 3秒超时
+        function fetchWithTimeout(url) {
+            return Promise.race([
+                fetch(url + testPath).then(res => res.ok ? url : Promise.reject()),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeout))
+            ]);
+        }
+        try {
+            const fastestUrl = await Promise.any(cdnList.map(fetchWithTimeout));
+            console.log(`Using fastest CDN: ${fastestUrl}`);
+            return fastestUrl;
+        } catch {
+            console.log('All CDN unavailable, fallback to https://cdn.jsdmirror.com');
+            return 'https://cdn.jsdmirror.com';
+        }
+    }
+    const cdnUrl = await getFastestCDN();
+    const statPath = cdnUrl + '/gh/ZBpine/bili-danmaku-statistic@2.1.3/';
+    const downPath = cdnUrl + '/gh/ZBpine/bilibili-danmaku-download@1.6.1.5/'
     const { BiliMidHashConverter } = await import(statPath + 'docs/BiliMidHashConverter.js');
     const { createBiliDataManagerImport } = await import(downPath + 'tampermonkey/BiliDataManager.js');
     const BiliDataManager = await createBiliDataManagerImport(GM_xmlhttpRequest, '');
