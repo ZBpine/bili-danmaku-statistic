@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bilibili 视频弹幕统计|下载|查询发送者
 // @namespace    https://github.com/ZBpine/bili-danmaku-statistic
-// @version      2.1.3
+// @version      2.1.4
 // @description  获取B站弹幕数据，并生成统计页面。
 // @author       ZBpine
 // @icon         https://www.bilibili.com/favicon.ico
@@ -23,7 +23,7 @@
         log: 'background: #01a1d6;',
         error: 'background: #d63601;',
         warn: 'background: #d6a001;',
-    }
+    };
     const console = new Proxy(window.console, {
         get(target, prop) {
             const original = target[prop];
@@ -56,12 +56,12 @@
         // 引入外部库
         const loader = new ResourceLoader(doc);
         await Promise.all([
-            loader.addCss(cdnUrl + '/npm/element-plus/dist/index.css'),
+            loader.addCss(cdnUrl + '/npm/element-plus@2.11.4/dist/index.css'),
             loader.addScript(cdnUrl + '/npm/vue@3.3.4/dist/vue.global.prod.js'),
             loader.addScript(cdnUrl + '/npm/echarts@5')
         ]);
         await Promise.all([
-            loader.addScript(cdnUrl + '/npm/element-plus/dist/index.full.min.js'),
+            loader.addScript(cdnUrl + '/npm/element-plus@2.11.4/dist/index.full.min.js'),
             loader.addScript(cdnUrl + '/npm/@element-plus/icons-vue/dist/index.iife.min.js'),
             loader.addScript(cdnUrl + '/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js'),
             loader.addScript(cdnUrl + '/npm/html2canvas@1.4.1/dist/html2canvas.min.js'),
@@ -1122,8 +1122,8 @@ onmessage = function (e) {
                             await resetFilter();
                             if (desc) ELEMENT_PLUS.ElMessage.success(`成功新增${desc}弹幕：${added} 条`);
                         } catch (e) {
-                            ELEMENT_PLUS.ElMessage.error('载入弹幕错误：' + e.message);
                             console.error(e);
+                            ELEMENT_PLUS.ElMessage.error('载入弹幕错误：' + e.message);
                         } finally {
                             dataLoader.progress.visible = false;
                         }
