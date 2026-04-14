@@ -1,3 +1,7 @@
+**项目3.0版本迁移至[bili-data-statistic](https://github.com/ZBpine/bili-data-statistic)，这里不再维护**
+
+---
+
 # B站视频弹幕统计
 获取B站视频页弹幕数据，并生成统计页面。**看看到底是哪个b崽子弹幕刷屏🔪**
 
